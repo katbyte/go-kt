@@ -1,0 +1,38 @@
+---
+name: release
+
+# A library has nothing to build or sign, so a release is just the tag plus the matching
+# CHANGELOG.md section published as GitHub release notes (goreleaser is for the binaries).
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # creates the release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: extract release notes from CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # the section for this tag runs from its "## vX.Y.Z" heading to the next "## " heading
+          awk -v tag="$TAG" '
+            /^## / { printing = ($2 == tag) ; next }
+            printing { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::error::no CHANGELOG.md section for $TAG"
+            exit 1
+          fi
+      - name: create github release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" --title "$TAG" --notes-file release-notes.md

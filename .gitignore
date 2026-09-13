@@ -1,0 +1,8 @@
+.claude/
+.DS_Store
+.idea/
+.tools/bin/
+.tools/venv/
+*.test
+*.out
+.coverage/
