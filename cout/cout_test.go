@@ -28,11 +28,12 @@ func capture(level Verbosity, f func(p printer)) (out, err string) {
 func TestVerbosityOrderingAndNames(t *testing.T) {
 	t.Parallel()
 
-	if VerbositySilent >= VerbosityQuiet || VerbosityQuiet >= VerbosityNormal || VerbosityNormal >= VerbosityVerbose {
-		t.Fatal("verbosity levels are not ordered silent < quiet < normal < verbose")
+	if VerbositySilent >= VerbosityJSON || VerbosityJSON >= VerbosityQuiet || VerbosityQuiet >= VerbosityNormal || VerbosityNormal >= VerbosityVerbose {
+		t.Fatal("verbosity levels are not ordered silent < json < quiet < normal < verbose")
 	}
 	names := map[Verbosity]string{
 		VerbositySilent:  "silent",
+		VerbosityJSON:    "json",
 		VerbosityQuiet:   "quiet",
 		VerbosityNormal:  "normal",
 		VerbosityVerbose: "verbose",
@@ -55,13 +56,13 @@ func TestPrintfGating(t *testing.T) {
 		prints  map[Verbosity]bool
 	}{
 		{"Printf (Normal)", VerbosityNormal, map[Verbosity]bool{
-			VerbositySilent: false, VerbosityQuiet: false, VerbosityNormal: true, VerbosityVerbose: true,
+			VerbositySilent: false, VerbosityJSON: false, VerbosityQuiet: false, VerbosityNormal: true, VerbosityVerbose: true,
 		}},
 		{"Verbosef (Verbose)", VerbosityVerbose, map[Verbosity]bool{
-			VerbositySilent: false, VerbosityQuiet: false, VerbosityNormal: false, VerbosityVerbose: true,
+			VerbositySilent: false, VerbosityJSON: false, VerbosityQuiet: false, VerbosityNormal: false, VerbosityVerbose: true,
 		}},
 		{"Quietf (Quiet and above)", VerbosityQuiet, map[Verbosity]bool{
-			VerbositySilent: false, VerbosityQuiet: true, VerbosityNormal: true, VerbosityVerbose: true,
+			VerbositySilent: false, VerbosityJSON: false, VerbosityQuiet: true, VerbosityNormal: true, VerbosityVerbose: true,
 		}},
 	}
 	for _, tc := range tests {
@@ -84,7 +85,7 @@ func TestWriter(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	for _, level := range []Verbosity{VerbositySilent, VerbosityQuiet} {
+	for _, level := range []Verbosity{VerbositySilent, VerbosityJSON, VerbosityQuiet} {
 		p := printer{level: level, out: &buf, err: io.Discard}
 		if p.writer() != io.Discard {
 			t.Errorf("at %s: writer is not io.Discard", level)
@@ -140,6 +141,7 @@ func TestPackageLevelFunctions(t *testing.T) {
 		wantErr string
 	}{
 		{"silent", VerbositySilent, "", ""},
+		{"json", VerbosityJSON, "", "error\n"},
 		{"quiet", VerbosityQuiet, "quiet\nquietonly\n", "error\n"},
 		{"normal", VerbosityNormal, "printf\nprintln\nquiet\n", "error\n"},
 		{"verbose", VerbosityVerbose, "printf\nprintln\nverbose\nquiet\n", "error\n"},

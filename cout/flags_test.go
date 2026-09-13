@@ -9,9 +9,9 @@ func TestLevelFromFlags(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name                    string
+		name                   string
 		silent, quiet, verbose bool
-		want                    Verbosity
+		want                   Verbosity
 	}{
 		{"none set is normal", false, false, false, VerbosityNormal},
 		{"verbose", false, false, true, VerbosityVerbose},
@@ -35,11 +35,35 @@ func TestLevelFromFlags(t *testing.T) {
 	}
 }
 
+// JSON sits between silent and quiet: it beats quiet and verbose, silent beats it
+func TestFlagsJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		f    Flags
+		want Verbosity
+	}{
+		{"json alone", Flags{JSON: true}, VerbosityJSON},
+		{"json beats quiet", Flags{JSON: true, Quiet: true}, VerbosityJSON},
+		{"json beats verbose", Flags{JSON: true, Verbose: true}, VerbosityJSON},
+		{"silent beats json", Flags{JSON: true, Silent: true}, VerbositySilent},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.f.Level(); got != tc.want {
+				t.Errorf("Flags%+v.Level() = %s, want %s", tc.f, got, tc.want)
+			}
+		})
+	}
+}
+
 // the tags are what let viper fill an embedded Flags, so they are part of the contract
 func TestFlagsMapstructureTags(t *testing.T) {
 	t.Parallel()
 
-	want := map[string]string{"Silent": "silent", "Quiet": "quiet", "Verbose": "verbose"}
+	want := map[string]string{"Silent": "silent", "JSON": "json", "Quiet": "quiet", "Verbose": "verbose"}
 	rt := reflect.TypeFor[Flags]()
 	if rt.NumField() != len(want) {
 		t.Fatalf("Flags has %d fields, want %d", rt.NumField(), len(want))
