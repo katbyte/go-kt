@@ -1,16 +1,12 @@
 # go-kt
 
 [![GitHub release](https://img.shields.io/github/v/release/katbyte/go-kt?color=blueviolet)](https://github.com/katbyte/go-kt/releases/latest)
-[![Go Reference](https://pkg.go.dev/badge/github.com/katbyte/go-kt.svg)](https://pkg.go.dev/github.com/katbyte/go-kt)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/katbyte/go-kt?label=go&color=00ADD8)](https://github.com/katbyte/go-kt/blob/main/go.mod)
-[![Go Report Card](https://goreportcard.com/badge/github.com/katbyte/go-kt)](https://goreportcard.com/report/github.com/katbyte/go-kt)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/katbyte/go-kt?color=00ADD8)](https://github.com/katbyte/go-kt/blob/main/go.mod)
 [![License](https://img.shields.io/github/license/katbyte/go-kt?color=blue)](https://github.com/katbyte/go-kt/blob/main/LICENSE)
 ![build](https://github.com/katbyte/go-kt/actions/workflows/build.yaml/badge.svg)
-![tests](https://github.com/katbyte/go-kt/actions/workflows/pr-tests.yaml/badge.svg)
-[![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/katbyte/go-kt/badges/coverage.json)](https://github.com/katbyte/go-kt/actions/workflows/coverage.yaml)
+![test](https://github.com/katbyte/go-kt/actions/workflows/pr-tests.yaml/badge.svg)
 ![lint](https://github.com/katbyte/go-kt/actions/workflows/pr-golangci-lint.yaml/badge.svg)
-![CodeQL](https://github.com/katbyte/go-kt/actions/workflows/codeql-analysis.yml/badge.svg)
-[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/katbyte/go-kt?label=openSSF)](https://scorecard.dev/viewer/?uri=github.com/katbyte/go-kt)
+[![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/katbyte/go-kt/badges/coverage.json)](https://github.com/katbyte/go-kt/actions/workflows/coverage.yaml)
 
 The small packages every katbyte command-line tool needs, kept in one place instead of copy-pasted into each repo.
 
