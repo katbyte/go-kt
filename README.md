@@ -32,13 +32,8 @@ func init() {
     clog.SetLevelFromEnv("MYTOOL_LOG") // "debug", "trace", ... default WARN
 }
 
-func run(quiet, verbose bool) {
-    switch {
-    case quiet:
-        cout.Level = cout.VerbosityQuiet
-    case verbose:
-        cout.Level = cout.VerbosityVerbose
-    }
+func run(silent, quiet, verbose bool) {
+    cout.SetLevelFromFlags(silent, quiet, verbose) // or embed cout.Flags in your flag struct and call Apply()
 
     cout.Printf("<green>mytool</> %s\n", version.Version)
     cout.Verbosef("only with -v\n")
