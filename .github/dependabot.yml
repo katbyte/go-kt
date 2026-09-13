@@ -5,6 +5,12 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      # init and analyze must run the same version (analyze refuses a config written by another
+      # release), so they have to move together in one PR
+      codeql-action:
+        patterns:
+          - "github/codeql-action/*"
 
   # this is a library, so nothing is vendored; dependabot runs `go mod tidy` on updates
   - package-ecosystem: "gomod"
