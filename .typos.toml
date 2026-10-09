@@ -13,6 +13,7 @@ extend-exclude = [
   ".tools/bin/",  # gitignored built tools
   ".tools/venv/", # gitignored python venv
   "**/go.sum",    # hashes
+  "spelling/spelling_test.go", # a test of a typo detector is made of deliberate typos ("adventrue flims")
 ]
 
 [default]

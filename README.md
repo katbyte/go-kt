@@ -17,6 +17,8 @@ The small packages every katbyte command-line tool needs, kept in one place inst
 | [`chttp`](chttp) | an `http.Client` with trace logging, per-attempt timeouts, and retries that never re-send a mutation whose fate is unknown |
 | [`version`](version) | the tool's version, stamped at build time or taken from module build info |
 | [`pointer`](pointer) | `From` and `To` for optional API fields: dereference-or-zero, and pointer-to-value in expression position |
+| [`spelling`](spelling) | one name spelled two ways: a key that folds case, accents, separators and punctuation, and the tests for a slip of the keyboard or a name cut short |
+| [`whitespace`](whitespace) | the spaces out of place in a name - doubled, at an end, odd, before a colon or a file extension - named, made visible and put right |
 
 ## Usage
 
