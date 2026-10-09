@@ -1,4 +1,4 @@
-## Unreleased
+## v0.3.0 (2026-10-09)
 
 - add `spelling`: says when two names are one thing spelled two ways, a typing slip apart, or one cut short; extracted from embyfin-mcp and abs-mcp
 - add `whitespace`: finds the spaces out of place in a name or a file name, shows them, and gives the name put right; extracted from embyfin-mcp
