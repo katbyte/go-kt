@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -376,6 +377,41 @@ func TestRecordTrims(t *testing.T) {
 	defer func() { _ = replay.Close() }()
 	if _, got := get(t, replay, upstream.URL+"/list"); got != `[{"id":2}]` {
 		t.Errorf("replayed = %s", got)
+	}
+}
+
+// A failure is logged on one line, whatever the request it names holds: a
+// path can carry a line break, and the reason a fetch failed names the path,
+// so a request could otherwise start a line of the log the proxy never
+// wrote.
+func TestAFailureIsLoggedOnOneLine(t *testing.T) {
+	t.Parallel()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", contentJSON)
+		_, _ = io.WriteString(w, `[]`)
+	}))
+	t.Cleanup(upstream.Close)
+	host := strings.TrimPrefix(upstream.URL, "http://")
+
+	var logged logBuffer
+	p, err := New(Options{
+		Mode: Record, CassetteDir: t.TempDir(), Addr: loopback, Logger: log.New(&logged, "", 0),
+		Trim: map[string]func([]byte) ([]byte, error){
+			host + "/list\nREPLAY MISS forged": func([]byte) ([]byte, error) { return nil, errors.New("not the list this trim knows") },
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = p.Close() }()
+
+	if status, _ := get(t, p, upstream.URL+"/list%0AREPLAY%20MISS%20forged"); status != http.StatusBadGateway {
+		t.Fatalf("a trim that fails answered %d", status)
+	}
+	lines := strings.Split(strings.TrimSpace(logged.String()), "\n")
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "record ") || !strings.Contains(lines[0], "not the list this trim knows") {
+		t.Errorf("the failure was logged as %q, want the one line", lines)
 	}
 }
 

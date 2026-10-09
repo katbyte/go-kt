@@ -345,7 +345,7 @@ func (p *Proxy) tunnel(w http.ResponseWriter, r *http.Request) {
 
 	cert, err := p.certFor(host)
 	if err != nil {
-		p.logger.Printf("cert for %s: %v", logSafe(host), err)
+		p.logger.Printf("cert for %s: %s", logSafe(host), logSafe(err.Error()))
 		return
 	}
 	conn := tls.Server(raw, &tls.Config{
@@ -356,21 +356,21 @@ func (p *Proxy) tunnel(w http.ResponseWriter, r *http.Request) {
 	// the tunnel and then sent nothing, which is silence in the log exactly
 	// where an answer is needed
 	if err := raw.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
-		p.logger.Printf("deadline for %s: %v", logSafe(host), err)
+		p.logger.Printf("deadline for %s: %s", logSafe(host), logSafe(err.Error()))
 		return
 	}
 	if err := conn.HandshakeContext(r.Context()); err != nil {
 		// the client hung up or refused our certificate; in a container set
 		// up to trust it the latter should not happen, so say so rather than
 		// leave a server timing out against a silent proxy
-		p.logger.Printf("tls handshake with %s: %v", logSafe(host), err)
+		p.logger.Printf("tls handshake with %s: %s", logSafe(host), logSafe(err.Error()))
 		return
 	}
 	defer func() { _ = conn.Close() }()
 	defer dropReader(conn)
 
 	if err := raw.SetDeadline(time.Time{}); err != nil {
-		p.logger.Printf("clearing the deadline for %s: %v", logSafe(host), err)
+		p.logger.Printf("clearing the deadline for %s: %s", logSafe(host), logSafe(err.Error()))
 		return
 	}
 
@@ -385,7 +385,7 @@ func (p *Proxy) tunnel(w http.ResponseWriter, r *http.Request) {
 			// EOF is the peer closing a finished tunnel; anything else, on a
 			// tunnel that carried nothing, is worth saying out loud
 			if served == 0 {
-				p.logger.Printf("tunnel to %s carried no request: %v", logSafe(host), err)
+				p.logger.Printf("tunnel to %s carried no request: %s", logSafe(host), logSafe(err.Error()))
 			}
 
 			return
@@ -442,13 +442,13 @@ func (p *Proxy) respond(w http.ResponseWriter, r *http.Request, host string) {
 				writeInteraction(w, live)
 				return
 			}
-			p.logger.Printf("live %s: %v, replaying the recording", logSafe(k), err)
+			p.logger.Printf("live %s: %s, replaying the recording", logSafe(k), logSafe(err.Error()))
 		}
 		p.logger.Printf("replay %s -> %d", logSafe(k), i.Status)
 		if p.mode == Verify {
 			live, err := p.fetch(r, host, k, path)
 			if err != nil {
-				p.logger.Printf("verify %s: %v", logSafe(k), err)
+				p.logger.Printf("verify %s: %s", logSafe(k), logSafe(err.Error()))
 			} else {
 				// held against the recording as the recording holds it
 				live.redact(p.redactBody)
@@ -474,7 +474,7 @@ func (p *Proxy) respond(w http.ResponseWriter, r *http.Request, host string) {
 
 	i, err := p.record(r, host, k, path)
 	if err != nil {
-		p.logger.Printf("record %s: %v", logSafe(k), err)
+		p.logger.Printf("record %s: %s", logSafe(k), logSafe(err.Error()))
 		http.Error(w, "replayproxy: "+err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -482,7 +482,8 @@ func (p *Proxy) respond(w http.ResponseWriter, r *http.Request, host string) {
 }
 
 // logSafe keeps a value taken off a request to one line of the log: a
-// newline in a url or a host would start a line the proxy never wrote.
+// newline in a url or a host would start a line the proxy never wrote. The
+// reason a request failed goes through it too, because it names the request.
 func logSafe(s string) string {
 	s = strings.ReplaceAll(s, "\n", "")
 	return strings.ReplaceAll(s, "\r", "")
