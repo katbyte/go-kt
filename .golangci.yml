@@ -117,6 +117,7 @@ linters:
         - {name: max-public-structs, disabled: true}       # struct-count cap; another metric gate
         - {name: enforce-switch-style, disabled: true}     # empty defaults would silence the stronger exhaustive check
         - {name: unhandled-error, disabled: true}          # errcheck covers this with sane fmt.Print* defaults and nolint support
+        - {name: multiline-if-init, disabled: true}        # azproviderlint's AZG001 asks for the opposite: an error checked in the if that makes it
     govet:
       enable-all: true # includes nilness and other checks off by default
       disable:
@@ -131,6 +132,7 @@ linters:
         - "color"
         - "organization"
         - "recognized"
+        - "unauthorized" # HTTP's own word for a 401, and part of Node's NODE_TLS_REJECT_UNAUTHORIZED
     tagalign:
       sort: true
     predeclared:

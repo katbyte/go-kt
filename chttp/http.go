@@ -86,7 +86,9 @@ func NewHTTPClient(name string) *http.Client {
 
 // Transport is an http.RoundTripper that dumps each request and response to
 // clog.Log at TRACE, with JSON bodies pretty-printed. The dumps include
-// headers, so they are only produced when TRACE is actually enabled.
+// headers, so they are only produced when TRACE is actually enabled. A
+// request that gets no answer comes back with what the operating system may
+// be doing about it, where that is known (see Explain).
 type Transport struct {
 	name      string
 	transport http.RoundTripper
@@ -110,7 +112,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	resp, err := t.transport.RoundTrip(req)
 	if err != nil {
-		return resp, err
+		return resp, Explain(err)
 	}
 
 	if clog.Log.IsLevelEnabled(logrus.TraceLevel) {
