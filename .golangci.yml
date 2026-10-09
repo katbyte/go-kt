@@ -132,6 +132,7 @@ linters:
         - "color"
         - "organization"
         - "recognized"
+        - "unauthorized" # HTTP's own word for a 401, and part of Node's NODE_TLS_REJECT_UNAUTHORIZED
     tagalign:
       sort: true
     predeclared:
