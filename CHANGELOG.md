@@ -1,4 +1,4 @@
-## Unreleased
+## v0.4.0 (2026-10-09)
 
 - add `parallel`: runs a batch of jobs a few at a time and stops at the first error; extracted from abs-mcp and embyfin-mcp
 - add `lock`: makes two edits of one record in one process take turns; extracted from abs-mcp and embyfin-mcp
