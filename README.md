@@ -14,11 +14,15 @@ The small packages every katbyte command-line tool needs, kept in one place inst
 |---|---|
 | [`clog`](clog) | the shared logrus logger: stderr, timestamps, level from the tool's own env var |
 | [`cout`](cout) | verbosity-levelled, coloured console output (`--quiet`, `--verbose`, `--silent`) |
-| [`chttp`](chttp) | an `http.Client` with trace logging, per-attempt timeouts, and retries that never re-send a mutation whose fate is unknown |
+| [`chttp`](chttp) | an `http.Client` with trace logging, per-attempt timeouts, and retries that never re-send a mutation whose fate is unknown; and what an API client needs around one: credentials kept out of errors and off other hosts, and one error for an unexpected status |
 | [`version`](version) | the tool's version, stamped at build time or taken from module build info |
 | [`pointer`](pointer) | `From` and `To` for optional API fields: dereference-or-zero, and pointer-to-value in expression position |
 | [`spelling`](spelling) | one name spelled two ways: a key that folds case, accents, separators and punctuation, and the tests for a slip of the keyboard or a name cut short |
 | [`whitespace`](whitespace) | the spaces out of place in a name - doubled, at an end, odd, before a colon or a file extension - named, made visible and put right |
+| [`parallel`](parallel) | a batch of jobs run a few at a time, stopped at the first error |
+| [`lock`](lock) | a lock a record, so two edits of one thing in one process take turns |
+| [`mcp/server`](mcp/server) | an MCP server served over stdio, or over HTTP behind a bearer token with a health probe |
+| [`mcp/registry`](mcp/registry) | which tools an MCP session gets: read, write and delete kinds, toolsets, allow and deny lists |
 
 ## Usage
 
