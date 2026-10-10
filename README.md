@@ -20,7 +20,7 @@ The small packages every katbyte command-line tool needs, kept in one place inst
 | [`spelling`](spelling) | one name spelled two ways: a key that folds case, accents, separators and punctuation, and the tests for a slip of the keyboard or a name cut short |
 | [`whitespace`](whitespace) | the spaces out of place in a name - doubled, at an end, odd, before a colon or a file extension - named, made visible and put right |
 | [`parallel`](parallel) | a batch of jobs run a few at a time, stopped at the first error |
-| [`lock`](lock) | locks by id or by name, so two edits of one thing in one process take turns |
+| [`lock`](lock) | a lock on a record, a named piece of one or a plain string, any mix in one call, so two edits of one thing in one process take turns; one set for the process, or a set of your own |
 | [`mcp/server`](mcp/server) | an MCP server served over stdio, or over HTTP behind a bearer token with a health probe |
 | [`mcp/registry`](mcp/registry) | which tools an MCP session gets: read, write and delete kinds, toolsets, allow and deny lists |
 | [`mcp/acctest`](mcp/acctest) | a test suite that drives an MCP server as a client does, and fails when a tool was never seen to work |

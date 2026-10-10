@@ -1,3 +1,8 @@
+## Unreleased
+
+- lock (breaking): one call, `lock.By`, locks any mix of things: a record (a value whose type has a `LockID` method), `lock.ID[T](id)` for one known only by its id, `lock.Field(thing, "name")` for a named piece of one, and `lock.String(s)`; `lock.ByString(s)` is short for the last. `ByID`, `ByName`, `MultipleByID`, `MultipleByName` and `NameID` are gone
+- lock: add `lock.NewSet`, a set of locks of its own with the same calls and `Idle`, for an application that holds more than one server and for a test
+
 ## v0.4.0 (2026-10-09)
 
 - add `parallel`: runs a batch of jobs a few at a time and stops at the first error; extracted from abs-mcp and embyfin-mcp
