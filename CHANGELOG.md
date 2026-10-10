@@ -6,8 +6,8 @@
 - spelling: add `InitialsOf`, two names that are one person with a first name reduced to its initial; extracted from abs-mcp
 - chttp (breaking): imports only the standard library and logs nothing unless handed a logger: `chttp.New(chttp.Options{Log: clog.Log})` replaces `NewHTTPClient(name)`, and `NewTransport`, `NewRetryTransport` and `NewBaseTransport` take `Options`
 - chttp (breaking): by default a request is sent again for a 429, a 502, 503 or 504 and a dropped connection, and no longer for a plain 500, a server that cannot be reached or a timeout; what is worth another try, how often and how long after are set in `Options.Retry`. `DefaultMaxRetry` is `DefaultTries`
-- chttp: a trace no longer shows credentials (the Authorization and cookie headers, common key and password names, and whatever the application adds) and never reads more of a body than it prints, so a download stays a stream
-- chttp: add `Fetch`, which reads an answer whole up to a limit and asks again for one that stops part way; `Tries`, how often a request was sent; `Dropped`; and `Options.HeaderWait`, for an API that is slow to start answering
+- chttp: a trace no longer shows credentials (the Authorization and cookie headers, any name that ends in password, secret, token or api_key, and whatever the application adds) and never reads more of a body than it prints, so a download stays a stream
+- chttp: add `Fetch`, which reads an answer whole up to a limit and asks again for one that stops part way; `Tries`, how often a request was sent; `Dropped` and `Refused`, to say which failures are worth another try; `Options.HeaderWait`, for an API that is slow to start answering; and `Options.Base`, a transport of the caller's own underneath
 - chttp: add `RefuseRedirects`, a redirect policy that follows none and says why, and `IsWebPage`, a page answering where an API's own answer was expected; extracted from abs-mcp and technitium-mcp
 
 ## v0.4.0 (2026-10-09)

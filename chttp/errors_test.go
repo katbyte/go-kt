@@ -15,9 +15,9 @@ import (
 	"testing"
 )
 
-// refused is the error of a dial the system refused with "no route to host",
+// noRoute is the error of a dial the system refused with "no route to host",
 // as an http.Client hands it back.
-func refused() error {
+func noRoute() error {
 	return &url.Error{Op: "Get", URL: "https://nas.invalid/api", Err: fmt.Errorf("dial tcp 10.0.0.4:443: connect: %w", syscall.EHOSTUNREACH)}
 }
 
@@ -27,7 +27,7 @@ func refused() error {
 func TestExplainSaysWhatAMacMayBeDoing(t *testing.T) {
 	t.Parallel()
 
-	err := refused()
+	err := noRoute()
 	got := Explain(err)
 	if !errors.Is(got, syscall.EHOSTUNREACH) {
 		t.Errorf("explained, the error is no longer the one it wraps: %v", got)
@@ -94,14 +94,18 @@ func TestDropped(t *testing.T) {
 	t.Parallel()
 
 	for name, err := range map[string]error{
-		"reset by the other end":             &net.OpError{Op: "read", Net: "tcp", Err: os.NewSyscallError("read", syscall.ECONNRESET)},
-		"a write to a closed connection":     &url.Error{Op: "Post", URL: "http://nas/api", Err: fmt.Errorf("write tcp: %w", syscall.EPIPE)},
-		"aborted":                            fmt.Errorf("read: %w", syscall.ECONNABORTED),
-		"an answer that stopped part way":    fmt.Errorf("reading the answer: %w", io.ErrUnexpectedEOF),
-		"an answer that never started":       &url.Error{Op: "Get", URL: "http://nas/api", Err: io.EOF},
-		"a connection closed under the read": fmt.Errorf("read tcp: %w", net.ErrClosed),
-		"net/http's words for an idle close": errors.New("http: server closed idle connection"),
-		"http2's words for a server leaving": errors.New("http2: server sent GOAWAY and closed the connection"),
+		"reset by the other end":              &net.OpError{Op: "read", Net: "tcp", Err: os.NewSyscallError("read", syscall.ECONNRESET)},
+		"a write to a closed connection":      &url.Error{Op: "Post", URL: "http://nas/api", Err: fmt.Errorf("write tcp: %w", syscall.EPIPE)},
+		"aborted":                             fmt.Errorf("read: %w", syscall.ECONNABORTED),
+		"an answer that stopped part way":     fmt.Errorf("reading the answer: %w", io.ErrUnexpectedEOF),
+		"an answer that never started":        &url.Error{Op: "Get", URL: "http://nas/api", Err: io.EOF},
+		"a connection closed under the read":  fmt.Errorf("read tcp: %w", net.ErrClosed),
+		"net/http's words for an idle close":  errors.New("http: server closed idle connection"),
+		"http2's words for a server leaving":  errors.New("http2: server sent GOAWAY and closed the connection"),
+		"http2's words for a lost connection": errors.New("http2: client connection lost"),
+		"a stream a proxy gave up":            errors.New("stream error: stream ID 5; INTERNAL_ERROR; received from peer"),
+		"a stream the server cancelled":       errors.New("stream error: stream ID 7; CANCEL; received from peer"),
+		"a stream the server would not take":  errors.New("stream error: stream ID 9; REFUSED_STREAM"),
 	} {
 		if !Dropped(err) {
 			t.Errorf("%s (%v) is not taken for a dropped connection", name, err)
@@ -109,19 +113,37 @@ func TestDropped(t *testing.T) {
 	}
 
 	for name, err := range map[string]error{
-		"no error":                        nil,
-		"a server that is not there":      &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)},
-		"no route to it":                  fmt.Errorf("connect: %w", syscall.EHOSTUNREACH),
-		"a name that did not resolve":     &net.DNSError{Err: "no such host", Name: "nas.invalid", IsNotFound: true},
-		"a wait that ran out":             &url.Error{Op: "Get", URL: "http://nas/api", Err: timeoutError{}},
-		"a wait that ran out on a reset":  fmt.Errorf("%w: %w", timeoutError{}, syscall.ECONNRESET),
-		"a request that was cancelled":    fmt.Errorf("Get: %w", context.Canceled),
-		"a deadline that passed":          fmt.Errorf("Get: %w", context.DeadlineExceeded),
-		"a certificate that did not hold": errors.New("tls: failed to verify certificate: x509: certificate signed by unknown authority"),
-		"an answer that is not HTTP":      errors.New("net/http: HTTP/1.x transport connection broken: malformed HTTP response"),
+		"no error":                         nil,
+		"a server that is not there":       &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)},
+		"no route to it":                   fmt.Errorf("connect: %w", syscall.EHOSTUNREACH),
+		"a name that did not resolve":      &net.DNSError{Err: "no such host", Name: "nas.invalid", IsNotFound: true},
+		"a wait that ran out":              &url.Error{Op: "Get", URL: "http://nas/api", Err: timeoutError{}},
+		"a wait that ran out on a reset":   fmt.Errorf("%w: %w", timeoutError{}, syscall.ECONNRESET),
+		"a request that was cancelled":     fmt.Errorf("Get: %w", context.Canceled),
+		"a deadline that passed":           fmt.Errorf("Get: %w", context.DeadlineExceeded),
+		"a certificate that did not hold":  errors.New("tls: failed to verify certificate: x509: certificate signed by unknown authority"),
+		"an answer that is not HTTP":       errors.New("net/http: HTTP/1.x transport connection broken: malformed HTTP response"),
+		"a stream reset for a broken rule": errors.New("stream error: stream ID 5; PROTOCOL_ERROR; received from peer"),
+		"an error that names a code alone": errors.New("the server said: INTERNAL_ERROR; CANCEL"),
 	} {
 		if Dropped(err) {
 			t.Errorf("%s (%v) is taken for a dropped connection", name, err)
+		}
+	}
+}
+
+// A refused connection is nothing listening, which is told apart from a
+// connection that dropped so that a caller can ask for either.
+func TestRefused(t *testing.T) {
+	t.Parallel()
+
+	refusal := &url.Error{Op: "Get", URL: "http://nas/api", Err: &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}}
+	if !Refused(refusal) || Dropped(refusal) {
+		t.Errorf("a refused connection: Refused %v, Dropped %v, want it refused and not dropped", Refused(refusal), Dropped(refusal))
+	}
+	for name, err := range map[string]error{"no error": nil, "a reset": fmt.Errorf("read: %w", syscall.ECONNRESET), "no route": fmt.Errorf("connect: %w", syscall.EHOSTUNREACH), "a wait that ran out": timeoutError{}} {
+		if Refused(err) {
+			t.Errorf("%s (%v) is taken for a refused connection", name, err)
 		}
 	}
 }

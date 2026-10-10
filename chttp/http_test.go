@@ -8,10 +8,12 @@ import (
 	"go/token"
 	"io"
 	"io/fs"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -538,8 +540,8 @@ func TestRetryIsTheCallersToSet(t *testing.T) {
 	if status, sent, _ := get(Options{Retry: Retry{Wait: instant, Status: func(code int) bool { return code == 500 }}}, 503, 200); status != 503 || sent != 1 {
 		t.Errorf("with only 500 named, a 503 came back as %d after %d tries, want it as it was after 1", status, sent)
 	}
-	if status, sent, err := get(Options{Retry: Retry{Wait: instant, Error: func(err error) bool { return errors.Is(err, syscall.ECONNREFUSED) }}}, connRefused, 200); err != nil || status != 200 || sent != 2 {
-		t.Errorf("with a refused connection named as worth another try: status %d after %d tries (%v), want 200 after 2", status, sent, err)
+	if status, sent, err := get(Options{Retry: Retry{Wait: instant, Error: func(err error) bool { return Dropped(err) || Refused(err) }}}, connRefused, connDropped, 200); err != nil || status != 200 || sent != 3 {
+		t.Errorf("with a refused connection named as worth another try beside a dropped one: status %d after %d tries (%v), want 200 after 3", status, sent, err)
 	}
 	if status, sent, err := get(Options{Retry: Retry{Wait: instant, Tries: 5}}, 503, 503, 503, 503, 200); err != nil || status != 200 || sent != 5 {
 		t.Errorf("with five tries: status %d after %d tries (%v), want 200 after 5", status, sent, err)
@@ -599,42 +601,48 @@ func TestTries(t *testing.T) {
 // whole is what the cutShort server answers when it answers whole.
 const whole = `{"items":["a","b","c"],"total":3}`
 
-// cutShort is a server that says an answer is longer than what it sends
-// before it drops the connection, for the first few requests, and then
-// answers whole.
-func cutShort(t *testing.T, times int) (srv *httptest.Server, requests func() int) {
+// scripted is a server that answers each request in turn as it is told to,
+// and the last way for every request after: "ok" is the whole answer, "cut"
+// says the answer is longer than what it sends before it drops the
+// connection, and a number is that status with nothing after it.
+func scripted(t *testing.T, outcomes ...string) (srv *httptest.Server, requests func() int) {
 	t.Helper()
 
 	var mu sync.Mutex
 	hits := 0
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		mu.Lock()
+		outcome := outcomes[min(hits, len(outcomes)-1)]
 		hits++
-		n := hits
 		mu.Unlock()
 
-		if n > times {
+		switch outcome {
+		case "ok":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, whole)
+		case "cut":
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Error("the test server cannot drop a connection")
 
-			return
+				return
+			}
+			conn, buf, err := hj.Hijack()
+			if err != nil {
+				t.Error(err)
+
+				return
+			}
+			_, _ = fmt.Fprintf(buf, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", len(whole), whole[:len(whole)/2])
+			_ = buf.Flush()
+			_ = conn.Close()
+		default:
+			status, err := strconv.Atoi(outcome)
+			if err != nil {
+				t.Errorf("the test server was told to answer %q", outcome)
+			}
+			w.WriteHeader(status)
 		}
-
-		hj, ok := w.(http.Hijacker)
-		if !ok {
-			t.Error("the test server cannot drop a connection")
-
-			return
-		}
-		conn, buf, err := hj.Hijack()
-		if err != nil {
-			t.Error(err)
-
-			return
-		}
-		_, _ = fmt.Fprintf(buf, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", len(whole), whole[:len(whole)/2])
-		_ = buf.Flush()
-		_ = conn.Close()
 	}))
 	t.Cleanup(srv.Close)
 
@@ -644,6 +652,19 @@ func cutShort(t *testing.T, times int) (srv *httptest.Server, requests func() in
 
 		return hits
 	}
+}
+
+// cutShort is a server whose answer stops part way for the first few
+// requests, and then comes whole.
+func cutShort(t *testing.T, times int) (srv *httptest.Server, requests func() int) {
+	t.Helper()
+
+	outcomes := make([]string, 0, times+1)
+	for range times {
+		outcomes = append(outcomes, "cut")
+	}
+
+	return scripted(t, append(outcomes, "ok")...)
 }
 
 // Fetch reads an answer whole, and asks again for one that stopped part way,
@@ -726,6 +747,39 @@ func TestFetch(t *testing.T) {
 		}
 	})
 
+	t.Run("however it fails, a request is sent no more than the tries it has", func(t *testing.T) {
+		t.Parallel()
+
+		// refused by a gateway twice and then cut short, over and over: three sends, not three times three
+		srv, hits := scripted(t, "503", "503", "cut", "503", "503", "cut", "503", "503", "cut", "ok")
+		_, _, err := fetch(http.MethodGet, srv, 1<<20) //nolint:bodyclose // Fetch hands the body back read and closed
+		if err == nil || hits() != 3 || !strings.HasSuffix(err.Error(), "(tried 3 times)") {
+			t.Errorf("Fetch = %v after %d requests, want an error after 3 that says so", err, hits())
+		}
+
+		// and the third try, when it comes whole, is still an answer
+		srv, hits = scripted(t, "503", "cut", "ok")
+		resp, body, err := fetch(http.MethodGet, srv, 1<<20) //nolint:bodyclose // Fetch hands the body back read and closed
+		if err != nil || string(body) != whole || hits() != 3 || Tries(resp) != 3 {
+			t.Errorf("Fetch = %q (%v) after %d requests, want the answer on the third", body, err, hits())
+		}
+	})
+
+	t.Run("the largest limit there is, is no limit", func(t *testing.T) {
+		t.Parallel()
+
+		srv, _ := cutShort(t, 0)
+		_, body, err := fetch(http.MethodGet, srv, math.MaxInt64) //nolint:bodyclose // Fetch hands the body back read and closed
+		if err != nil || string(body) != whole {
+			t.Errorf("with no limit Fetch = %q (%v), want the answer", body, err)
+		}
+
+		// and no room at all is an answer that has nothing in it, or a refusal
+		if _, _, err := fetch(http.MethodGet, srv, 0); !errors.Is(err, ErrTooLarge) { //nolint:bodyclose // Fetch hands the body back read and closed
+			t.Errorf("with a limit of nothing Fetch = %v, want an answer of 33 bytes refused", err)
+		}
+	})
+
 	t.Run("no answer at all is the transport's error", func(t *testing.T) {
 		t.Parallel()
 
@@ -772,5 +826,65 @@ func TestOnlyTheStandardLibraryIsImported(t *testing.T) {
 	}
 	if files < 3 {
 		t.Errorf("read the imports of %d files, want every file of the package", files)
+	}
+}
+
+// A redirect followed on the way is another request, not another try: it
+// uses up none of the tries the request has.
+func TestARedirectIsNotATry(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		asked = append(asked, r.URL.Path)
+		n := len(asked)
+		mu.Unlock()
+
+		switch {
+		case r.URL.Path == "/old":
+			http.Redirect(w, r, "/new", http.StatusFound)
+		case n == 2:
+			w.WriteHeader(http.StatusServiceUnavailable)
+		default:
+			_, _ = io.WriteString(w, whole)
+		}
+	}))
+	defer srv.Close()
+
+	o := atOnce()
+	o.Retry.Tries = 2
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+"/old", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, body, err := New(o).Fetch(req, 1<<20) //nolint:bodyclose // Fetch hands the body back read and closed
+	if err != nil || string(body) != whole || !slices.Equal(asked, []string{"/old", "/new", "/new"}) {
+		t.Fatalf("Fetch = %q (%v) having asked for %v, want the answer after one redirect and one retry", body, err, asked)
+	}
+	if got := Tries(resp); got != 2 {
+		t.Errorf("Tries = %d, want 2: the redirect was not a try", got)
+	}
+}
+
+// A client is built on the transport it is handed, where it is handed one.
+func TestNewOnABaseOfTheCallersOwn(t *testing.T) {
+	t.Parallel()
+
+	base := &fakeTransport{statuses: []int{503, 200}}
+	o := atOnce()
+	o.Base = base
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://example.test/", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := New(o).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || base.count() != 2 {
+		t.Errorf("status %d after %d requests through the caller's transport, want 200 after 2: the retries sit on top of it", resp.StatusCode, base.count())
 	}
 }

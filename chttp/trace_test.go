@@ -221,7 +221,7 @@ func TestTraceBlanksWhatIsSecret(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	o := Options{SecretHeaders: []string{"X-Widget-Token"}, SecretNames: []string{"pin", "pw"}}
+	o := Options{SecretHeaders: []string{"X-Widget-Token"}, SecretNames: []string{"PIN", "pw"}}
 	for name, send := range map[string]struct {
 		contentType, body string
 	}{
@@ -422,6 +422,40 @@ func TestTextual(t *testing.T) {
 	} {
 		if got := textual(contentType); got != want {
 			t.Errorf("textual(%q) = %v, want %v", contentType, got, want)
+		}
+	}
+}
+
+// A credential is known by how its name ends, whatever an API puts in front
+// of it, so one nobody listed is still not in a trace; a name that only
+// looks like one is left alone.
+func TestTraceBlanksANameThatEndsAsACredentialDoes(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"proxyPassword":"s3cret-1","tsigKeys":[{"keyName":"k","sharedSecret":"s3cret-2"}],"partialToken":"s3cret-3","REFRESH_TOKEN":"s3cret-4","apiKey":"s3cret-5","TmdbApiKey":"s3cret-11","tokens":"shown-1","passwordHint":"shown-2","secretary":"shown-3","token_count":"shown-4","sortKey":"shown-5","password":null}`))
+	}))
+	defer srv.Close()
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL+"/join?sessionToken=s3cret-6&page_token=s3cret-7&tokens=shown-6&flag&Api%5FKey=s3cret-8&x_api_key=s3cret-12", strings.NewReader("node=two&primaryNodePassword=s3cret-9&client_secret=s3cret-10&secrets=shown-7"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	out := traceOf(t, Options{}, http.DefaultTransport, req)
+	if strings.Contains(out, "s3cret") {
+		t.Errorf("the trace shows a credential:\n%s", out)
+	}
+	for i := 1; i <= 7; i++ {
+		if !strings.Contains(out, fmt.Sprintf("shown-%d", i)) {
+			t.Errorf("the trace hides shown-%d, under a name that only looks like a credential's:\n%s", i, out)
+		}
+	}
+	for _, want := range []string{"/join?sessionToken=REDACTED&page_token=REDACTED&tokens=shown-6&flag&Api%5FKey=REDACTED&x_api_key=REDACTED ", `"TmdbApiKey": "REDACTED"`, "\nnode=two&primaryNodePassword=REDACTED&client_secret=REDACTED&secrets=shown-7\n", `"sharedSecret": "REDACTED"`, `"REFRESH_TOKEN": "REDACTED"`, `"apiKey": "REDACTED"`, `"password": null`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the trace is missing %q:\n%s", want, out)
 		}
 	}
 }

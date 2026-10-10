@@ -47,8 +47,9 @@ func Explain(err error) error {
 
 // Dropped reports whether a request failed because a connection that was
 // there went away: reset or closed by the other end, or ended in the middle
-// of an answer. It is what a client takes as worth another try unless told
-// otherwise (see Retry).
+// of an answer, over HTTP/2 as a stream the server or a proxy gave up. It is
+// what a client takes as worth another try unless told otherwise (see
+// Retry).
 //
 // A server that could not be reached at all, a name that did not resolve, a
 // certificate that did not check out, a wait that ran out and a request that
@@ -68,8 +69,23 @@ func Dropped(err error) bool {
 
 	// net/http says some of these in words alone
 	msg := err.Error()
+	if slices.ContainsFunc([]string{"server closed idle connection", "connection reset by peer", "broken pipe", "unexpected EOF", "server sent GOAWAY", "http2: client connection lost"}, func(words string) bool { return strings.Contains(msg, words) }) {
+		return true
+	}
 
-	return slices.ContainsFunc([]string{"server closed idle connection", "connection reset by peer", "broken pipe", "unexpected EOF", "server sent GOAWAY"}, func(words string) bool { return strings.Contains(msg, words) })
+	// over HTTP/2 an answer given up part way is a stream reset, which is
+	// how one cut short behind a proxy arrives; a stream reset for a broken
+	// protocol is not that, and would be again
+	return strings.Contains(msg, "stream error: ") && slices.ContainsFunc([]string{"; INTERNAL_ERROR", "; CANCEL", "; REFUSED_STREAM"}, func(code string) bool { return strings.Contains(msg, code) })
+}
+
+// Refused reports whether a request failed because nothing was listening
+// where it was sent. That is not a dropped connection, and a client does not
+// try again for it unless told to: a caller whose server restarts under it
+// says so, with func(err error) bool { return Dropped(err) || Refused(err) }
+// as its Retry's Error.
+func Refused(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED)
 }
 
 // credentialParams are the query parameters a credential commonly travels

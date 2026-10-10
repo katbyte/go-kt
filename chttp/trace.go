@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -23,9 +24,13 @@ const redacted = "REDACTED"
 // secretHeaders are the headers a credential travels in whatever the API.
 var secretHeaders = []string{"Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie"}
 
-// secretNames are the names a credential commonly has in a query, a form or
-// a JSON body, lowercased: the ones RedactURL knows and what a login sends.
-var secretNames = append(slices.Clone(credentialParams), "accesstoken", "refresh_token", "refreshtoken", "password", "secret")
+// secretEndings are how the name of a credential ends, lowercased, whatever
+// an API puts in front: primaryNodePassword, sharedSecret, refresh_token,
+// TmdbApiKey.
+// A name is matched by its ending because a name left off a list is a
+// credential in a log, with nothing to say so; the price is a page token
+// that a trace hides too.
+var secretEndings = []string{"password", "secret", "token", "apikey", "api_key"}
 
 // lazy is text put together only when something formats it, which is how a
 // trace costs nothing while tracing is off (see Logger).
@@ -43,12 +48,19 @@ type secrets struct {
 }
 
 func newSecrets(o Options) secrets {
-	s := secrets{headers: append(slices.Clone(secretHeaders), o.SecretHeaders...), names: append(slices.Clone(secretNames), o.SecretNames...)}
-	quoted := make([]string, 0, len(s.names))
-	for _, n := range s.names {
-		quoted = append(quoted, regexp.QuoteMeta(n))
+	s := secrets{headers: append(slices.Clone(secretHeaders), o.SecretHeaders...)}
+	for _, n := range append(slices.Clone(credentialParams), o.SecretNames...) {
+		s.names = append(s.names, strings.ToLower(n))
 	}
-	s.fields = regexp.MustCompile(`(?i)("(?:` + strings.Join(quoted, "|") + `)"\s*:\s*)"(?:[^"\\]|\\.)*"?`)
+
+	// a field with one of the names, or with a name that ends as a
+	// credential's does
+	named := make([]string, 0, len(s.names)+1)
+	for _, n := range s.names {
+		named = append(named, regexp.QuoteMeta(n))
+	}
+	named = append(named, `[^"\\]*(?:`+strings.Join(secretEndings, "|")+`)`)
+	s.fields = regexp.MustCompile(`(?i)("(?:` + strings.Join(named, "|") + `)"\s*:\s*)"(?:[^"\\]|\\.)*"?`)
 
 	return s
 }
@@ -57,11 +69,42 @@ func (s secrets) header(name string) bool {
 	return slices.ContainsFunc(s.headers, func(h string) bool { return strings.EqualFold(h, name) })
 }
 
+// name reports whether a query parameter or a form field of this name holds
+// a credential: one of the names, or a name that ends as a credential's
+// does.
+func (s secrets) name(name string) bool {
+	name = strings.ToLower(name)
+
+	return slices.Contains(s.names, name) || slices.ContainsFunc(secretEndings, func(ending string) bool { return strings.HasSuffix(name, ending) })
+}
+
+// query is a query string, or a form sent as one, with the value of every
+// credential in it blanked and the rest as it was sent.
+func (s secrets) query(raw string) string {
+	parts := strings.Split(raw, "&")
+	for i, p := range parts {
+		key, _, hasValue := strings.Cut(p, "=")
+		name, err := url.QueryUnescape(key)
+		if err != nil {
+			name = key
+		}
+		if hasValue && s.name(name) {
+			parts[i] = key + "=" + redacted
+		}
+	}
+
+	return strings.Join(parts, "&")
+}
+
 // requestText is a request as a trace shows it: its line, its headers and
 // what can be shown of its body.
 func (t *Transport) requestText(req *http.Request) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s %s %s\n", req.Method, RedactURL(req.URL.RequestURI(), t.secrets.names...), req.Proto)
+	path, query, hasQuery := strings.Cut(req.URL.RequestURI(), "?")
+	if hasQuery {
+		path += "?" + t.secrets.query(query)
+	}
+	fmt.Fprintf(&b, "%s %s %s\n", req.Method, path, req.Proto)
 	host := req.Host
 	if host == "" {
 		host = req.URL.Host
@@ -171,7 +214,7 @@ func (t *Transport) bodyText(head []byte, contentType string) string {
 
 	text := string(head)
 	if mediaType(contentType) == "application/x-www-form-urlencoded" {
-		text = strings.TrimPrefix(RedactURL("?"+text, t.secrets.names...), "?")
+		text = t.secrets.query(text)
 	} else {
 		text = t.secrets.fields.ReplaceAllString(text, `${1}"`+redacted+`"`)
 	}
