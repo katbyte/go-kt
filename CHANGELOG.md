@@ -1,5 +1,6 @@
 ## Unreleased
 
+- chttp: add `SecretName`, whether a name is a credential's by the rule a trace hides one by; a name that ends `passphrase`, `passkey`, `cookie`, `private_key` or `privatekey` is one now, in a trace as well
 - test/replayproxy: a proxy with no `CassetteDir` keeps no recordings and replays alone, for a suite that keeps its server from the internet and answers what it asks itself; one that records or verifies still needs somewhere to keep them
 - test/env: a miss says what to do about it in the suite's own words when it gave a `RecordHint`, in the report at the end of a run as well as in the log, and a suite with no recordings is told that a request had no answer, and to answer it or find what asked, where both were told it had no recording and to record one
 

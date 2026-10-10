@@ -488,3 +488,22 @@ func TestRedactJSON(t *testing.T) {
 		}
 	}
 }
+
+// A name holds a credential when it is one an API passes a credential
+// under, one the caller adds, or one that ends as a credential's does,
+// whatever is in front and in whatever case.
+func TestSecretName(t *testing.T) {
+	t.Parallel()
+
+	for name, want := range map[string]bool{
+		"password": true, "Password": true, "primaryNodePassword": true, "sharedSecret": true, "refresh_token": true, "TmdbApiKey": true, "api_key": true, "apikey": true, "token": true, "ssh_passphrase": true, "ssh_private_key": true, "sshPrivateKey": true, "cookie": true, "sessionCookie": true, "passkey": true, "Passkey": true,
+		"name": false, "passwords": false, "tokens": false, "cookies": false, "key": false, "userKey": false, "tls_key": false, "sort_key": false, "pass": false, "": false,
+	} {
+		if got := SecretName(name); got != want {
+			t.Errorf("SecretName(%q) = %v, want %v", name, got, want)
+		}
+	}
+	if !SecretName("Webhook", "feed_url", "webhook") || SecretName("webhooks", "webhook") {
+		t.Error("a name the caller adds is matched whole, in whatever case")
+	}
+}

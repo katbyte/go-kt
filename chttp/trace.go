@@ -26,11 +26,26 @@ var secretHeaders = []string{"Authorization", "Proxy-Authorization", "Cookie", "
 
 // secretEndings are how the name of a credential ends, lowercased, whatever
 // an API puts in front: primaryNodePassword, sharedSecret, refresh_token,
-// TmdbApiKey.
+// TmdbApiKey, ssh_private_key, sessionCookie.
 // A name is matched by its ending because a name left off a list is a
 // credential in a log, with nothing to say so; the price is a page token
 // that a trace hides too.
-var secretEndings = []string{"password", "secret", "token", "apikey", "api_key"}
+var secretEndings = []string{"password", "passphrase", "passkey", "secret", "token", "cookie", "apikey", "api_key", "privatekey", "private_key"}
+
+// SecretName reports whether a parameter, a field or an argument of this
+// name holds a credential, by the rule a trace hides one by: one of the
+// names an API passes a credential under, one of also, or a name that ends
+// as a credential's does (password, passphrase, passkey, secret, token,
+// cookie, apikey, api_key, privatekey, private_key), whatever is in front
+// and in whatever case.
+func SecretName(name string, also ...string) bool {
+	name = strings.ToLower(name)
+	if slices.Contains(credentialParams, name) || slices.ContainsFunc(also, func(a string) bool { return strings.EqualFold(a, name) }) {
+		return true
+	}
+
+	return slices.ContainsFunc(secretEndings, func(ending string) bool { return strings.HasSuffix(name, ending) })
+}
 
 // defaultSecrets is what is hidden when nothing more is named.
 var defaultSecrets = newSecrets(Options{})
@@ -38,9 +53,8 @@ var defaultSecrets = newSecrets(Options{})
 // RedactJSON is JSON text, whole or cut short, with the value of every string
 // field that holds a credential blanked: a field of one of the names an API
 // passes a credential under, one of also, or one whose name ends as a
-// credential's does (password, secret, token, apikey, api_key). It is the
-// rule a trace hides a body's credentials by, for whatever else writes down
-// what it was sent.
+// credential's does (see SecretName). It is the rule a trace hides a body's
+// credentials by, for whatever else writes down what it was sent.
 func RedactJSON(text string, also ...string) string {
 	s := defaultSecrets
 	if len(also) > 0 {
