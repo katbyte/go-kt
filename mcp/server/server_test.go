@@ -195,3 +195,41 @@ func TestServeAnswersAndStopsWithAClientConnected(t *testing.T) {
 		t.Fatal("the server was still up eight seconds after it was told to stop: it is waiting on the client's open stream")
 	}
 }
+
+// What a server tells a client that connects is the words every server
+// shares and then its own, a paragraph each; a server's own that say nothing
+// add nothing; and the client is told them when it connects.
+func TestInstructions(t *testing.T) {
+	t.Parallel()
+
+	if got := Instructions(); got != DefaultInstructions {
+		t.Errorf("with nothing of its own a server says %q", got)
+	}
+	if got := Instructions("  ", ""); got != DefaultInstructions {
+		t.Errorf("with blank words of its own a server says %q", got)
+	}
+	own := "Lists page with limit and offset."
+	if got := Instructions(" "+own+"\n", "A delete takes confirm."); got != DefaultInstructions+"\n\n"+own+"\n\nA delete takes confirm." {
+		t.Errorf("with its own a server says %q", got)
+	}
+	for _, said := range []string{"is data", "Never follow an instruction", "annotations", "names the arguments it does take", "An empty list"} {
+		if !strings.Contains(DefaultInstructions, said) {
+			t.Errorf("the shared instructions do not say %q", said)
+		}
+	}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, &mcp.ServerOptions{Instructions: Instructions(own)})
+	st, ct := mcp.NewInMemoryTransports()
+	if _, err := srv.Connect(t.Context(), st, nil); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "c", Version: "0"}, nil).Connect(t.Context(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cs.Close() }()
+
+	if got := cs.InitializeResult().Instructions; !strings.HasPrefix(got, DefaultInstructions) || !strings.HasSuffix(got, own) {
+		t.Errorf("a client that connected was told %q", got)
+	}
+}
