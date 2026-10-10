@@ -1,5 +1,6 @@
 ## Unreleased
 
+- add `outside`: text that came from outside, a release's name or a file's or a description anyone can write, made safe to hand a model: `Text` takes out every character that does not show (control and format characters, among them the zero-width ones and those that override the direction text runs in, and the tag characters and variation selectors a message can be hidden in) and cuts what is left to a length
 - mcp/registry: add `Hints.Installs`, for a tool that has the server bring something in from outside and run it, an app or a plug-in; a client is told it is open world, the one hint MCP has for that and for `SendsOut`
 
 ## v0.6.0 (2026-10-10)
