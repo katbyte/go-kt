@@ -1,4 +1,4 @@
-## Unreleased
+## v0.6.0 (2026-10-10)
 
 - add `test/services/arrserver`: the servers a Sonarr, Radarr or Prowlarr calls home to, as a handler for a live suite to put behind its proxy: the update server, which is asked once a build is two weeks old, and the clock, whose recorded answer is wrong the next day; prowlarr-mcp's, brought over
 - add `test/services/newznab`: Newznab and Torznab indexers for a live suite to run beside the server under test, any number on one listener, each usenet or torrent, with a catalogue the test changes as it goes and failures it sets; a release says its title and category, and the date and the torrent size it does not say are picked from a spread by a seed that can be given again, so no test leans on one made-up value; the three indexers of sonarr-mcp, radarr-mcp and prowlarr-mcp made one
