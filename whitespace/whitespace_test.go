@@ -43,6 +43,22 @@ func TestProblemsVisibleFixed(t *testing.T) {
 		{"Zzyzx Film .mkv", File, []string{OddSpace, BeforeExtension}, "Zzyzx Film[U+00A0].mkv", "Zzyzx Film.mkv"},
 		{" Zzyzx Film.mkv", File, []string{EdgeSpace}, "␣Zzyzx Film.mkv", "Zzyzx Film.mkv"},
 		{"Zzyzx Film (2001).mkv", File, nil, "Zzyzx Film (2001).mkv", "Zzyzx Film (2001).mkv"},
+		// a space after the extension hides none before it, and is no part
+		// of the extension
+		{"Chapter 1 .mp3 ", File, []string{EdgeSpace, BeforeExtension}, "Chapter 1␣.mp3␣", "Chapter 1.mp3"},
+		{"Prologue.mp3 ", File, []string{EdgeSpace}, "Prologue.mp3␣", "Prologue.mp3"},
+		{"A  B .mp3", File, []string{DoubleSpace, BeforeExtension}, "A␣␣B␣.mp3", "A B.mp3"},
+		// an odd space doubles and stands before a colon as a space does,
+		// and the ordinary one beside it is part of the run
+		{"A\u00a0\u00a0B", Name, []string{OddSpace, DoubleSpace}, "A[U+00A0][U+00A0]B", "A B"},
+		{"A\u00a0 B", Name, []string{OddSpace, DoubleSpace}, "A[U+00A0]␣B", "A B"},
+		{"Title\u00a0: Sub", Name, []string{OddSpace, BeforeColon}, "Title[U+00A0]: Sub", "Title: Sub"},
+		{"\u00a0Dune", Name, []string{OddSpace, EdgeSpace}, "[U+00A0]Dune", "Dune"},
+		// nothing left of the name but spaces, or its extension: there is
+		// none to suggest
+		{"   ", Name, []string{DoubleSpace, EdgeSpace}, "␣␣␣", ""},
+		{" .m4b", File, []string{EdgeSpace, BeforeExtension}, "␣.m4b", ""},
+		{"\u00a0.m4b", File, []string{OddSpace, EdgeSpace, BeforeExtension}, "[U+00A0].m4b", ""},
 		// a name whose last dot starts no extension is all stem
 		{"Zzyzx Vs. The World ", File, []string{EdgeSpace}, "Zzyzx Vs. The World␣", "Zzyzx Vs. The World"},
 		// an original title keeps its language's typography: French sets a
@@ -50,6 +66,10 @@ func TestProblemsVisibleFixed(t *testing.T) {
 		{"Zzyzx : Le Film", Foreign, nil, "Zzyzx : Le Film", "Zzyzx : Le Film"},
 		{"Zzyzx : Le Film", Foreign, nil, "Zzyzx : Le Film", "Zzyzx : Le Film"},
 		{"Zzyzx : Le Film", Foreign, nil, "Zzyzx : Le Film", "Zzyzx : Le Film"},
+		// its typographic space is no double space beside an ordinary one,
+		// where a tab is
+		{"Zzyzx\u00a0 : Le Film", Foreign, nil, "Zzyzx\u00a0 : Le Film", "Zzyzx\u00a0 : Le Film"},
+		{"Zzyzx\t : Le Film", Foreign, []string{OddSpace, DoubleSpace}, "Zzyzx[U+0009]␣: Le Film", "Zzyzx : Le Film"},
 		// and the rest is still out of place there
 		{"Zzyzx  : Le Film", Foreign, []string{DoubleSpace}, "Zzyzx␣␣: Le Film", "Zzyzx : Le Film"},
 		{"Zzyzx\t: Le Film", Foreign, []string{OddSpace}, "Zzyzx[U+0009]: Le Film", "Zzyzx : Le Film"},
@@ -65,7 +85,7 @@ func TestProblemsVisibleFixed(t *testing.T) {
 			t.Errorf("Fixed(%q, %d) = %q, want %q", tc.text, tc.kind, got, tc.fixed)
 		}
 		// what is put right has nothing left to report
-		if left := Problems(Fixed(tc.text, tc.kind), tc.kind); len(left) != 0 {
+		if left := Problems(Fixed(tc.text, tc.kind), tc.kind); tc.fixed != "" && len(left) != 0 {
 			t.Errorf("%q put right as %q still has %v", tc.text, Fixed(tc.text, tc.kind), left)
 		}
 		// and every problem is one of the named ones, in their order
@@ -73,6 +93,54 @@ func TestProblemsVisibleFixed(t *testing.T) {
 			if slices.Index(ProblemOrder, tc.problems[i-1]) >= slices.Index(ProblemOrder, tc.problems[i]) {
 				t.Errorf("%v are not in ProblemOrder", tc.problems)
 			}
+		}
+	}
+}
+
+// A text put right has nothing left to put right, whatever it is read as:
+// every suggestion checked again comes back clean. The names are the ones
+// that broke this in abs-mcp's and embyfin-mcp's libraries.
+func TestFixedIsClean(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"Chapter 1 .mp3 ", "Chapter Three\u00a0.m4b", " .m4b", "A  B", "A  B .mp3", "Part Two ꞉ Six", "Part Two ꞉  Six ꞉ Seven .m4b",
+		"Dune\tMessiah", "\tDune\t", "A\u00a0 B", "Title\u00a0: Sub", "涼宮\u3000 ハルヒ", "涼宮 \u3000ハルヒ .m4b", "\u3000 \u3000",
+		" :Lead", "x.mp3 .m4b", "file.tar .gz", "Part 1. Intro .m4b", "Mr. Smith Goes ", ". hidden ", "A ꞉ ꞉ B", "  ",
+		"Disc\u20021 ", "End\u202f.mp3", "Name\r\n.mp3", "The  Horus Heresy - 22  Shadows of Treachery", "Titre\u202f: Sous-titre\u00a0", "Zzyzx .mkv\u00a0",
+	} {
+		for _, kind := range []Text{Name, File, Foreign} {
+			fixed := Fixed(name, kind)
+			if fixed == "" {
+				continue
+			}
+			if got := Problems(fixed, kind); len(got) > 0 {
+				t.Errorf("%q (kind %d) put right as %q still has %v", name, kind, fixed, got)
+			}
+			if again := Fixed(fixed, kind); again != fixed {
+				t.Errorf("%q (kind %d) put right as %q is put right again as %q", name, kind, fixed, again)
+			}
+		}
+	}
+}
+
+// SplitExt reads a name without the spaces after it.
+func TestSplitExt(t *testing.T) {
+	t.Parallel()
+
+	for name, want := range map[string][2]string{
+		"Chapter 1.mp3":       {"Chapter 1", ".mp3"},
+		"Chapter 1 .mp3 ":     {"Chapter 1 ", ".mp3"},
+		"Chapter 1.mp3\u00a0": {"Chapter 1", ".mp3"},
+		"Mr. Smith Goes":      {"Mr. Smith Goes", ""},
+		"Mr. Smith Goes ":     {"Mr. Smith Goes", ""},
+		".hidden":             {".hidden", ""},
+		"archive.tar.gz":      {"archive.tar", ".gz"},
+		"a.toolongext":        {"a.toolongext", ""},
+		"":                    {"", ""},
+	} {
+		if stem, ext := SplitExt(name); stem != want[0] || ext != want[1] {
+			t.Errorf("SplitExt(%q) = %q, %q, want %q, %q", name, stem, ext, want[0], want[1])
 		}
 	}
 }
