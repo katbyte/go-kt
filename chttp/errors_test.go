@@ -275,6 +275,8 @@ func TestStatusError(t *testing.T) {
 		{StatusError{Method: "POST", Path: "/Items/1", StatusCode: 500, Expected: []int{200, 204}, Tries: 3}, "POST /Items/1: HTTP 500 (expected 200 or 204) (tried 3 times)"},
 		{StatusError{Method: "GET", Path: "/x", StatusCode: 404, Body: "nope", Tries: 1}, "GET /x: HTTP 404: nope"},
 		{StatusError{Method: "DELETE", Path: "/x", StatusCode: 403}, "DELETE /x: HTTP 403"},
+		// a refused save echoes the record back, key and all
+		{StatusError{Method: "PUT", Path: "/indexer/2", StatusCode: 400, Body: `{"name":"Site","apiKey":"st0red-key","passkey":"pa55"}`}, `PUT /indexer/2: HTTP 400: {"name":"Site","apiKey":"REDACTED","passkey":"REDACTED"}`},
 	} {
 		if got := tc.err.Error(); got != tc.want {
 			t.Errorf("error = %q, want %q", got, tc.want)
@@ -313,6 +315,14 @@ func TestPreview(t *testing.T) {
 	}
 	if Preview(nil) != "" {
 		t.Error("no body has a preview")
+	}
+	// a credential in the body is blanked, whole or cut off part way
+	if got := Preview([]byte(`{"user":"kt","password":"hunter2"}`)); got != `{"user":"kt","password":"REDACTED"}` {
+		t.Errorf("a body with a password = %q", got)
+	}
+	cut := `{"id":1,"token":"` + strings.Repeat("s", PreviewLen) + `"}`
+	if got := Preview([]byte(cut)); strings.Contains(got, "sss") || !strings.HasSuffix(got, "...") {
+		t.Errorf("a token cut off part way = %q", got)
 	}
 }
 
