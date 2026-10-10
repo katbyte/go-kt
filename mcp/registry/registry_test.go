@@ -46,7 +46,7 @@ func config() Config {
 		Hints: map[string]Hints{
 			"library_create": {Additive: true},
 			"item_set_state": {Idempotent: true},
-			"item_send":      {Additive: true, OpenWorld: true},
+			"item_send":      {Additive: true, SendsOut: true},
 			"library_export": {WritesHere: true},
 		},
 	}
