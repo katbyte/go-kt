@@ -17,7 +17,7 @@ The small packages every katbyte command-line tool needs, kept in one place inst
 | [`chttp`](chttp) | an `http.Client` with trace logging, per-attempt timeouts, and retries that never re-send a mutation whose fate is unknown; and what an API client needs around one: credentials kept out of errors and off other hosts, and one error for an unexpected status |
 | [`version`](version) | the tool's version, stamped at build time or taken from module build info |
 | [`pointer`](pointer) | `From` and `To` for optional API fields: dereference-or-zero, and pointer-to-value in expression position |
-| [`spelling`](spelling) | one name spelled two ways: a key that folds case, accents, separators and punctuation, and the tests for a slip of the keyboard or a name cut short |
+| [`spelling`](spelling) | one name spelled two ways: a key that folds case, accents, separators and punctuation, and the tests for a slip of the keyboard, a name cut short or a first name reduced to its initial |
 | [`whitespace`](whitespace) | the spaces out of place in a name - doubled, at an end, odd, before a colon or a file extension - named, made visible and put right |
 | [`parallel`](parallel) | a batch of jobs run a few at a time, stopped at the first error |
 | [`lock`](lock) | a lock on a record, a named piece of one or a plain string, any mix in one call, so two edits of one thing in one process take turns; one set for the process, or a set of your own |
