@@ -340,6 +340,32 @@ func TestAnnotations(t *testing.T) {
 	}
 }
 
+// A tool that has the server bring something in from outside and run it is
+// told to a client as open world, as one that sends something out is: MCP has
+// the one hint for both. It is no less a write for it.
+func TestInstallsIsOpenWorld(t *testing.T) {
+	t.Parallel()
+
+	cfg := config()
+	cfg.Hints["library_scan"] = Hints{Idempotent: true, Installs: true}
+	listed, err := connect(t, newRegistry(cfg), Selection{}).ListTools(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tool := range listed.Tools {
+		if tool.Name != "library_scan" {
+			continue
+		}
+		if a := tool.Annotations; a == nil || a.OpenWorldHint == nil || !*a.OpenWorldHint || a.DestructiveHint == nil || !*a.DestructiveHint || !a.IdempotentHint || a.ReadOnlyHint {
+			t.Errorf("a tool that installs: %+v, want open world, and still a write that may overwrite", a)
+		}
+
+		return
+	}
+	t.Error("the tool that installs was not listed")
+}
+
 func TestMatchPattern(t *testing.T) {
 	t.Parallel()
 

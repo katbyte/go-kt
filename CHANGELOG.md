@@ -1,3 +1,7 @@
+## Unreleased
+
+- mcp/registry: add `Hints.Installs`, for a tool that has the server bring something in from outside and run it, an app or a plug-in; a client is told it is open world, the one hint MCP has for that and for `SendsOut`
+
 ## v0.6.0 (2026-10-10)
 
 - add `test/services/arrserver`: the servers a Sonarr, Radarr or Prowlarr calls home to, as a handler for a live suite to put behind its proxy: the update server, which is asked once a build is two weeks old, and the clock, whose recorded answer is wrong the next day; prowlarr-mcp's, brought over

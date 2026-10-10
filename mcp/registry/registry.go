@@ -74,6 +74,11 @@ type Hints struct {
 	// work to its own download client, does not. MCP's name for the hint
 	// is "open world".
 	SendsOut bool
+	// Installs is for a tool that has the server bring something in from
+	// outside and run it: an app, a plug-in. What it brings in is someone
+	// else's to change, and MCP has the one hint, "open world", for that
+	// and for SendsOut: a tool that sets either carries it.
+	Installs bool
 	// WritesHere is for a read tool that writes a file on the machine it
 	// runs on. The server is only read, so it stays a read tool and a
 	// read-only session keeps it, but it does not claim to change nothing.
@@ -152,13 +157,14 @@ func New(cfg Config) *Registry { return &Registry{cfg: cfg} }
 // rather than null, which a client cannot tell from "not fetched".
 func Add[In, Out any](r *Registry, kind Kind, t *mcp.Tool, h mcp.ToolHandlerFor[In, Out]) {
 	hints := r.cfg.Hints[t.Name]
+	openWorld := hints.SendsOut || hints.Installs
 	switch kind {
 	case Read:
-		t.Annotations = &mcp.ToolAnnotations{ReadOnlyHint: !hints.WritesHere, DestructiveHint: new(false), OpenWorldHint: new(hints.SendsOut)}
+		t.Annotations = &mcp.ToolAnnotations{ReadOnlyHint: !hints.WritesHere, DestructiveHint: new(false), OpenWorldHint: new(openWorld)}
 	case Write:
-		t.Annotations = &mcp.ToolAnnotations{DestructiveHint: new(!hints.Additive), IdempotentHint: hints.Idempotent, OpenWorldHint: new(hints.SendsOut)}
+		t.Annotations = &mcp.ToolAnnotations{DestructiveHint: new(!hints.Additive), IdempotentHint: hints.Idempotent, OpenWorldHint: new(openWorld)}
 	case Delete:
-		t.Annotations = &mcp.ToolAnnotations{DestructiveHint: new(true), OpenWorldHint: new(hints.SendsOut)}
+		t.Annotations = &mcp.ToolAnnotations{DestructiveHint: new(true), OpenWorldHint: new(openWorld)}
 	}
 
 	wrapped := func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
