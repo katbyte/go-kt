@@ -1,4 +1,4 @@
-## Unreleased
+## v0.5.1 (2026-10-09)
 
 - whitespace: a space that is not the ordinary one is out of place where an ordinary one would be: two no-break spaces are a double space, and one before a colon is a space before a colon
 - whitespace: a space after a file's extension no longer hides one before it; `SplitExt` reads a name without the spaces after it
