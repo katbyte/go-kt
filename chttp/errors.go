@@ -1,8 +1,11 @@
 package chttp
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -40,6 +43,33 @@ func Explain(err error) error {
 	}
 
 	return &explained{err: err, hint: localNetworkHint}
+}
+
+// Dropped reports whether a request failed because a connection that was
+// there went away: reset or closed by the other end, or ended in the middle
+// of an answer. It is what a client takes as worth another try unless told
+// otherwise (see Retry).
+//
+// A server that could not be reached at all, a name that did not resolve, a
+// certificate that did not check out, a wait that ran out and a request that
+// was cancelled are not: the next attempt would meet the same.
+func Dropped(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if ne, ok := errors.AsType[net.Error](err); ok && ne.Timeout() {
+		return false
+	}
+	for _, gone := range []error{syscall.ECONNRESET, syscall.ECONNABORTED, syscall.EPIPE, io.ErrUnexpectedEOF, io.EOF, net.ErrClosed} {
+		if errors.Is(err, gone) {
+			return true
+		}
+	}
+
+	// net/http says some of these in words alone
+	msg := err.Error()
+
+	return slices.ContainsFunc([]string{"server closed idle connection", "connection reset by peer", "broken pipe", "unexpected EOF", "server sent GOAWAY"}, func(words string) bool { return strings.Contains(msg, words) })
 }
 
 // credentialParams are the query parameters a credential commonly travels
@@ -122,6 +152,61 @@ func KeepCredentialsOnHost(headers ...string) func(req *http.Request, via []*htt
 
 		return nil
 	}
+}
+
+// RedirectError is a request that was redirected and not followed (see
+// RefuseRedirects).
+type RedirectError struct {
+	// Method and Path are the request that was redirected
+	Method string
+	Path   string
+	// To is where it was sent, with the credentials in it hidden
+	To string
+	// Advice is what the caller knows to do about it on this API: which
+	// setting holds the address to put right
+	Advice string
+}
+
+func (e *RedirectError) Error() string {
+	msg := fmt.Sprintf("%s %s was redirected to %s", e.Method, e.Path, e.To)
+	if e.Advice != "" {
+		msg += ": " + e.Advice
+	}
+
+	return msg
+}
+
+// RefuseRedirects is a redirect policy, for an http.Client's CheckRedirect:
+// no redirect is followed, and the request fails with a *RedirectError that
+// says where it was sent and gives the advice.
+//
+// It is for an API that answers where it is asked, so that a redirect means
+// the address points at something in front of it: an http address a proxy
+// moves to https, or a login page. Following one is worse than failing. Go
+// turns a DELETE, PATCH or POST into a GET on a 301, 302 or 303 and drops
+// its body, the GET answers 200, and the write reports success having done
+// nothing. An API that does redirect wants KeepCredentialsOnHost.
+func RefuseRedirects(advice string) func(req *http.Request, via []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		return &RedirectError{Method: via[0].Method, Path: via[0].URL.Path, To: RedactURL(req.URL.String()), Advice: advice}
+	}
+}
+
+// IsWebPage reports whether an answer is an HTML document where an API's own
+// answer was expected: a wrong address or a proxy's login page answers 200
+// with a page, for a request that never reached the API.
+//
+// The body decides. A proxy can label anything anything, so a document that
+// starts as HTML is a page whatever it is called; and some servers label
+// their own one-word replies as HTML, so what is called HTML is a page only
+// when it starts with a tag.
+func IsWebPage(contentType string, body []byte) bool {
+	head := strings.ToLower(strings.TrimSpace(string(body[:min(len(body), 512)])))
+	if strings.HasPrefix(head, "<!doctype html") || strings.HasPrefix(head, "<html") {
+		return true
+	}
+
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "text/html") && strings.HasPrefix(head, "<")
 }
 
 // StatusError is an answer with a status the request did not ask for.

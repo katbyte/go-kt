@@ -2,10 +2,15 @@ package clog
 
 import (
 	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/sirupsen/logrus"
+
+	"github.com/katbyte/go-kt/chttp"
 )
 
 func TestNewDefaults(t *testing.T) {
@@ -119,5 +124,87 @@ func TestPackageLevelSetters(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "nonsense") {
 		t.Errorf("SetLevel (bad) logged %q, want the bad value named", buf.String())
+	}
+}
+
+// read is a body that says whether anything read it.
+type read struct {
+	io.Reader
+
+	touched bool
+}
+
+func (r *read) Read(p []byte) (int, error) {
+	r.touched = true
+
+	return r.Reader.Read(p)
+}
+
+func (*read) Close() error { return nil }
+
+// answer is a transport that answers every request with one body.
+type answer struct{ body *read }
+
+func (a answer) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{Status: "200 OK", StatusCode: http.StatusOK, Proto: "HTTP/1.1", Header: http.Header{"Content-Type": {"application/json"}}, Body: a.body, Request: req}, nil
+}
+
+// A logger made here is what chttp asks for as it stands, and what chttp
+// relies on holds of it: below trace a request's trace is never put
+// together, so nothing is read from the answer to show it.
+func TestALoggerIsWhatAnHTTPClientTraces(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	l := NewWithOutput(&buf)
+	var _ chttp.Logger = l
+	var _ chttp.Logger = Log
+
+	send := func() *read {
+		t.Helper()
+
+		body := &read{Reader: strings.NewReader(`{"hello":"world"}`)}
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://nas.invalid/things", http.NoBody)
+		req.Header.Set("Authorization", "Bearer s3cret")
+		resp, err := chttp.NewTransport(chttp.Options{Name: "Widget", Log: l}, answer{body}).RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if got, err := io.ReadAll(resp.Body); err != nil || string(got) != `{"hello":"world"}` {
+			t.Fatalf("the caller read %q (%v), want the answer", got, err)
+		}
+
+		return body
+	}
+
+	l.SetLevel(logrus.DebugLevel)
+	body := send()
+	if buf.Len() != 0 {
+		t.Fatalf("at debug the client logged %q, want nothing", buf.String())
+	}
+
+	// the same request with the body watched from before it is sent: nothing reads it until the caller does
+	watched := &read{Reader: strings.NewReader(`{"hello":"world"}`)}
+	resp, err := chttp.NewTransport(chttp.Options{Name: "Widget", Log: l}, answer{watched}).RoundTrip(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://nas.invalid/things", http.NoBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if watched.touched || !body.touched {
+		t.Errorf("at debug the answer was read before its caller read it: %v", watched.touched)
+	}
+
+	l.SetLevel(logrus.TraceLevel)
+	send()
+	out := buf.String()
+	// logrus quotes the message, so the pretty-printed body's own quotes arrive escaped
+	for _, want := range []string{"level=trace", "Widget API Request Details", "GET /things HTTP/1.1", "Authorization: REDACTED", "Widget API Response Details", `{\n \"hello\": \"world\"\n}`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the trace is missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "s3cret") {
+		t.Errorf("the trace shows the key:\n%s", out)
 	}
 }

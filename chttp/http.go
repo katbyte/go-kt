@@ -1,39 +1,158 @@
 // Package chttp provides the HTTP client every katbyte tool talks to APIs
-// with: trace-level request/response logging through clog, per-attempt
-// timeouts so a stalled server fails fast, and retries for transient failures
-// that are careful never to re-send a mutation whose outcome is unknown.
+// with: per-attempt timeouts so a stalled server fails fast, retries for
+// transient failures that are careful never to re-send a mutation whose
+// outcome is unknown, and a trace of every exchange for whoever hands it a
+// logger.
+//
+// It imports nothing outside the standard library and logs nothing of its
+// own accord, so an SDK can be built on it without handing whoever uses that
+// SDK a logger they did not ask for. The application that wants the traffic
+// in its log says so when it makes the client:
+//
+//	client := chttp.New(chttp.Options{Name: "Audiobookshelf", Log: clog.Log})
+//
+// What counts as worth another try, how long to wait for an answer and what
+// is too secret to print are each API's own, so each is the caller's to set
+// (Options); the defaults are the cautious ones.
 package chttp
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
-	"net/http/httputil"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/sirupsen/logrus"
-
-	"github.com/katbyte/go-kt/clog"
 )
 
-// DefaultMaxRetry is how many attempts NewHTTPClient makes before giving up:
-// enough to ride through a blip or a single rate-limit window without turning
-// an outage into a minutes-long hang.
-const DefaultMaxRetry = 3
+// DefaultTries is how many times a request is sent before giving up: enough
+// to ride through a blip or a single rate-limit window without turning an
+// outage into a minutes-long hang.
+const DefaultTries = 3
+
+// DefaultHeaderWait is how long a server has to start answering.
+const DefaultHeaderWait = 30 * time.Second
 
 // MaxRetryAfter caps how long a Retry-After header can make a retry wait. A
 // server asking for more than this is telling an interactive tool to come back
 // later, not to sit there.
 const MaxRetryAfter = 60 * time.Second
 
+// Logger is where a client says what it is doing: a retry at debug, and each
+// request and answer at trace. A logrus logger is one as it stands, clog.Log
+// among them.
+//
+// What is traced is put together only when the logger formats it, and is
+// read from the request and the answer at that moment. So a logger must
+// format before Tracef returns, and one that drops a level without
+// formatting, as logrus does, costs nothing while that level is off.
+type Logger interface {
+	Debugf(format string, args ...any)
+	Tracef(format string, args ...any)
+}
+
+// Options are what a client is made with. The zero value is a client that
+// logs nothing and retries with the defaults.
+type Options struct {
+	// Name says whose traffic this is in a log, so a tool talking to two
+	// APIs can tell them apart.
+	Name string
+	// Log is where retries and the trace of each exchange go. Nil logs
+	// nothing.
+	Log Logger
+	// Retry is when a request is sent again.
+	Retry Retry
+	// HeaderWait is how long the server has to start answering one
+	// attempt; 0 is DefaultHeaderWait. An API with calls that are slow to
+	// start answering - a search it runs before it writes a byte - wants
+	// longer. Reading the answer is not bounded by it.
+	HeaderWait time.Duration
+	// SecretHeaders are headers whose values a trace must not show, beside
+	// Authorization, Proxy-Authorization, Cookie and Set-Cookie: the header
+	// of its own an API takes a key in.
+	SecretHeaders []string
+	// SecretNames are the names whose values a trace must not show wherever
+	// they appear - a query parameter, a form field, a JSON field - beside
+	// the common ones (api_key, token, password and the like), compared
+	// without case.
+	SecretNames []string
+	// TraceBody is how much of a body a trace prints, in bytes: 0 is
+	// DefaultTraceBody, and a negative number prints no body at all. No
+	// more than this is ever read to print it.
+	TraceBody int
+}
+
+// Retry is when a request is sent again, and how long after. The zero value
+// is the default: three tries a second and then two apart, for an answer of
+// 502, 503 or 504 and for a connection that dropped.
+//
+// A request is only ever sent again when that cannot do the work twice. One
+// refused with 429 was turned away before it was acted on, so any request
+// may be; otherwise only a request that is safe to repeat is - a GET, HEAD
+// or OPTIONS, or one marked with MarkRetrySafe. A write that gets no answer,
+// or an error for one, may still have been made.
+type Retry struct {
+	// Tries is how many times a request is sent in all; 0 is DefaultTries
+	// and 1 never sends it again.
+	Tries int
+	// Wait is how long to wait after the attempt numbered from 0 failed;
+	// nil is 1s, 2s, 4s and so on. A 429's Retry-After is used in its
+	// place, up to MaxRetryAfter.
+	Wait func(attempt int) time.Duration
+	// Status says whether an answer with this status is worth another try;
+	// nil is 502, 503 and 504, which a gateway gives for a server it could
+	// not reach. A plain 500 is left out: many servers answer it for what
+	// will never succeed, and trying those again only makes the failure
+	// slower. An API that uses 500 for "busy" adds it here.
+	Status func(code int) bool
+	// Error says whether a request that got no answer is worth sending
+	// again; nil is Dropped, a connection that was there and went. A server
+	// that cannot be reached at all is not one, and neither is a timeout:
+	// waiting the same wait again is rarely what is wanted.
+	Error func(err error) bool
+}
+
+func (r Retry) tries() int {
+	if r.Tries == 0 {
+		return DefaultTries
+	}
+
+	return max(1, r.Tries)
+}
+
+func (r Retry) wait(attempt int) time.Duration {
+	if r.Wait != nil {
+		return r.Wait(attempt)
+	}
+
+	return backoff(attempt)
+}
+
+func (r Retry) status(code int) bool {
+	if r.Status != nil {
+		return r.Status(code)
+	}
+
+	return code == http.StatusBadGateway || code == http.StatusServiceUnavailable || code == http.StatusGatewayTimeout
+}
+
+func (r Retry) failed(err error) bool {
+	if r.Error != nil {
+		return r.Error(err)
+	}
+
+	return Dropped(err)
+}
+
 type ctxKey int
 
-const retrySafeKey ctxKey = 0
+const (
+	retrySafeKey ctxKey = iota
+	triesKey
+)
 
 // MarkRetrySafe declares a request safe to re-send even though its method is
 // not idempotent: a GraphQL or JQL query is a read that happens to travel as a
@@ -43,8 +162,8 @@ func MarkRetrySafe(req *http.Request) *http.Request {
 }
 
 // retrySafe reports whether a request may be re-sent when its outcome is
-// unknown (a transport error or a 5xx): true for idempotent methods and marked
-// reads. A mutation that gets no response may still have been applied
+// unknown (no answer, or a server error): true for idempotent methods and
+// marked reads. A mutation that gets no response may still have been applied
 // server-side, so re-sending it risks doing the work twice.
 func retrySafe(req *http.Request) bool {
 	if v, ok := req.Context().Value(retrySafeKey).(bool); ok && v {
@@ -54,15 +173,122 @@ func retrySafe(req *http.Request) bool {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return true
 	}
+
 	return false
 }
 
+// counted gives a request a count of the times it is sent, unless it has one
+// already: Fetch starts the count, so that the tries it makes and the ones
+// the transport makes under it add up to one number.
+func counted(req *http.Request) (with *http.Request, sent *int) {
+	if n, ok := req.Context().Value(triesKey).(*int); ok {
+		return req, n
+	}
+	n := new(int)
+
+	return req.WithContext(context.WithValue(req.Context(), triesKey, n)), n
+}
+
+// Tries is how many times the request behind an answer was sent, for an
+// error that says so (StatusError's Tries): 1 for an answer that came first
+// time, and 0 for one no client made here sent.
+func Tries(resp *http.Response) int {
+	if resp == nil || resp.Request == nil {
+		return 0
+	}
+	if n, ok := resp.Request.Context().Value(triesKey).(*int); ok {
+		return *n
+	}
+
+	return 0
+}
+
+// Client is an http.Client whose requests are tried again and traced as its
+// Options say. It is used as one - Do, Timeout and CheckRedirect are all
+// there - and adds Fetch, for an answer read whole.
+type Client struct {
+	*http.Client
+
+	o Options
+}
+
+// New returns a client made as the options say. It sets no limit on a whole
+// request and follows redirects as Go does: set Timeout and CheckRedirect on
+// it for an API that wants otherwise (see KeepCredentialsOnHost).
+func New(o Options) *Client {
+	return &Client{Client: &http.Client{Transport: NewRetryTransport(o, NewTransport(o, NewBaseTransport(o)))}, o: o}
+}
+
+// ErrTooLarge is an answer longer than the caller of Fetch said it would
+// hold.
+var ErrTooLarge = errors.New("the answer is too large")
+
+// Fetch sends a request and reads its whole answer, for one small enough to
+// hold: at most limit bytes, and a longer one is an error (ErrTooLarge)
+// rather than an answer cut to fit. The response comes back with its body
+// read and closed, whatever its status.
+//
+// An answer that stops part way - a proxy that drops the connection in the
+// middle of a body - is asked for again as any other dropped connection is,
+// which the retry inside a transport cannot do: the body is read after the
+// transport has returned. A request that is not safe to repeat is not sent
+// again for it.
+func (c *Client) Fetch(req *http.Request, limit int64) (*http.Response, []byte, error) {
+	req, sent := counted(req)
+	tries := c.o.Retry.tries()
+	for attempt := 0; ; attempt++ {
+		resp, err := c.Do(req)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+		_ = resp.Body.Close()
+		if err == nil {
+			if int64(len(body)) > limit {
+				return resp, nil, fmt.Errorf("%w: over %s, more than this client reads", ErrTooLarge, size(limit))
+			}
+
+			return resp, body, nil
+		}
+
+		if attempt >= tries-1 || !retrySafe(req) || !c.o.Retry.failed(err) || req.Context().Err() != nil || !rewind(req) {
+			return resp, nil, tried(fmt.Errorf("reading the answer: %w", err), *sent)
+		}
+
+		wait := c.o.Retry.wait(attempt)
+		c.debugf("%s answer stopped part way (attempt %d/%d), asking again in %s: %v", c.o.Name, attempt+1, tries, wait, err)
+		if !sleep(req.Context(), wait) {
+			return resp, nil, errors.Join(req.Context().Err(), err)
+		}
+	}
+}
+
+func (c *Client) debugf(format string, args ...any) {
+	if c.o.Log != nil {
+		c.o.Log.Debugf(format, args...)
+	}
+}
+
+// size writes a number of bytes the way a person says it.
+func size(n int64) string {
+	switch {
+	case n >= 1<<20 && n%(1<<20) == 0:
+		return strconv.FormatInt(n>>20, 10) + " MiB"
+	case n >= 1<<10 && n%(1<<10) == 0:
+		return strconv.FormatInt(n>>10, 10) + " KiB"
+	}
+
+	return strconv.FormatInt(n, 10) + " bytes"
+}
+
 // NewBaseTransport returns http.DefaultTransport tuned with per-attempt
-// timeouts so a stalled connection or unresponsive server fails fast and gets
-// retried by RetryTransport instead of hanging the command. It is exported so
+// timeouts so a stalled connection or unresponsive server fails fast instead
+// of hanging the command: ten seconds to connect, ten for TLS, and the
+// options' HeaderWait for the server to start answering. It is exported so
 // callers that must build their own client (oauth2, for one) can still start
 // from the same transport.
-func NewBaseTransport() http.RoundTripper {
+func NewBaseTransport(o Options) http.RoundTripper {
 	t, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
 		return http.DefaultTransport // unreachable, but degrade gracefully
@@ -71,43 +297,34 @@ func NewBaseTransport() http.RoundTripper {
 	c := t.Clone()
 	c.DialContext = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	c.TLSHandshakeTimeout = 10 * time.Second
-	c.ResponseHeaderTimeout = 30 * time.Second
+	c.ResponseHeaderTimeout = o.HeaderWait
+	if o.HeaderWait == 0 {
+		c.ResponseHeaderTimeout = DefaultHeaderWait
+	}
+
 	return c
 }
 
-// NewHTTPClient returns a client that trace-logs every exchange under name and
-// retries transient failures up to DefaultMaxRetry times. name appears in the
-// logs so a tool talking to two APIs can tell their traffic apart.
-func NewHTTPClient(name string) *http.Client {
-	return &http.Client{
-		Transport: NewRetryTransport(name, NewTransport(name, NewBaseTransport()), DefaultMaxRetry),
-	}
-}
-
-// Transport is an http.RoundTripper that dumps each request and response to
-// clog.Log at TRACE, with JSON bodies pretty-printed. The dumps include
-// headers, so they are only produced when TRACE is actually enabled. A
-// request that gets no answer comes back with what the operating system may
-// be doing about it, where that is known (see Explain).
+// Transport is an http.RoundTripper that traces each request and answer to
+// the options' Log, with what is secret blanked (see Options) and JSON
+// bodies pretty-printed, and that says of a request that got no answer what
+// the operating system may be doing about it, where that is known (see
+// Explain). With no Log it traces nothing and only explains.
 type Transport struct {
-	name      string
+	o         Options
 	transport http.RoundTripper
+	secrets   secrets
 }
 
-// NewTransport wraps next with trace logging under name.
-func NewTransport(name string, next http.RoundTripper) *Transport {
-	return &Transport{name: name, transport: next}
+// NewTransport wraps next with the trace the options ask for.
+func NewTransport(o Options, next http.RoundTripper) *Transport {
+	return &Transport{o: o, transport: next, secrets: newSecrets(o)}
 }
 
 // RoundTrip implements http.RoundTripper.
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if clog.Log.IsLevelEnabled(logrus.TraceLevel) {
-		reqData, err := httputil.DumpRequestOut(req, true)
-		if err == nil {
-			clog.Log.Tracef(logReqMsg, t.name, prettyPrintJSON(reqData))
-		} else {
-			clog.Log.Debugf("%s API Request error: %#v", t.name, err)
-		}
+	if t.o.Log != nil {
+		t.o.Log.Tracef(logReqMsg, t.o.Name, lazy(func() string { return t.requestText(req) }))
 	}
 
 	resp, err := t.transport.RoundTrip(req)
@@ -115,34 +332,26 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return resp, Explain(err)
 	}
 
-	if clog.Log.IsLevelEnabled(logrus.TraceLevel) {
-		respData, err := httputil.DumpResponse(resp, true)
-		if err == nil {
-			clog.Log.Tracef(logRespMsg, t.name, prettyPrintJSON(respData))
-		} else {
-			clog.Log.Debugf("%s API Response error: %#v", t.name, err)
-		}
+	if t.o.Log != nil {
+		t.o.Log.Tracef(logRespMsg, t.o.Name, lazy(func() string { return t.responseText(resp) }))
 	}
 
 	return resp, nil
 }
 
-// RetryTransport wraps an http.RoundTripper with retry logic for transient
-// failures: 429 (rate limited) for every request, plus connection errors and
-// 5xx (server error) responses for retry-safe requests only (see
-// MarkRetrySafe). Attempts back off exponentially (1s, 2s, 4s, ...), a 429's
-// Retry-After header is honoured up to MaxRetryAfter, and a cancelled request
-// context aborts the wait.
+// RetryTransport wraps an http.RoundTripper with the retries the options
+// ask for (see Retry): 429 for every request, and a dropped connection or a
+// status worth another try for requests that are safe to repeat. A 429's
+// Retry-After header is honoured up to MaxRetryAfter, and a cancelled
+// request context aborts the wait.
 type RetryTransport struct {
-	name      string
+	o         Options
 	transport http.RoundTripper
-	maxRetry  int
 }
 
-// NewRetryTransport wraps next with up to maxRetry attempts under name. A
-// maxRetry below 1 is treated as 1: every request is sent at least once.
-func NewRetryTransport(name string, next http.RoundTripper, maxRetry int) *RetryTransport {
-	return &RetryTransport{name: name, transport: next, maxRetry: max(1, maxRetry)}
+// NewRetryTransport wraps next with the retries the options ask for.
+func NewRetryTransport(o Options, next http.RoundTripper) *RetryTransport {
+	return &RetryTransport{o: o, transport: next}
 }
 
 // RoundTrip implements http.RoundTripper.
@@ -150,58 +359,46 @@ func (t *RetryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	var resp *http.Response
 	var err error
 
-	// a request body is consumed by each attempt, so it must be rewound via GetBody
-	// before a retry; requests with a body but no GetBody cannot be retried safely.
-	// http.NoBody counts as bodyless — NewRequest leaves GetBody nil for it
-	rewind := func() bool {
-		if req.Body == nil || req.Body == http.NoBody {
-			return true
-		}
-		if req.GetBody == nil {
-			return false
-		}
-		body, gbErr := req.GetBody()
-		if gbErr != nil {
-			return false
-		}
-		req.Body = body
-		return true
-	}
-
+	req, sent := counted(req)
 	safe := retrySafe(req)
-	for attempt := range t.maxRetry {
+	tries := t.o.Retry.tries()
+	for attempt := range tries {
+		*sent++
 		resp, err = t.transport.RoundTrip(req)
 		if err != nil {
 			// a transport error can land after the server committed the write
 			// (the response just never made it back), so only retry-safe
 			// requests go again — re-posting a comment would duplicate it
-			if attempt < t.maxRetry-1 && safe && rewind() {
-				wait := backoff(attempt)
-				clog.Log.Debugf("%s request failed (attempt %d/%d), retrying in %s: %v", t.name, attempt+1, t.maxRetry, wait, err)
+			if attempt < tries-1 && safe && t.o.Retry.failed(err) && req.Context().Err() == nil && rewind(req) {
+				wait := t.o.Retry.wait(attempt)
+				t.debugf("%s request failed (attempt %d/%d), retrying in %s: %v", t.o.Name, attempt+1, tries, wait, err)
 				if !sleep(req.Context(), wait) {
 					return nil, errors.Join(req.Context().Err(), err)
 				}
+
 				continue
 			}
-			return nil, err
+
+			return nil, tried(err, *sent)
 		}
 
 		// 429 (rate limited) was rejected before it was acted on, so every
-		// request may retry it; a 5xx leaves a mutation's fate unknown, so
-		// only retry-safe requests ride through those
-		if resp.StatusCode == http.StatusTooManyRequests || (safe && resp.StatusCode >= 500) {
-			if attempt < t.maxRetry-1 && rewind() {
-				wait := backoff(attempt)
+		// request may retry it; a server error leaves a mutation's fate
+		// unknown, so only retry-safe requests ride through those
+		if resp.StatusCode == http.StatusTooManyRequests || (safe && t.o.Retry.status(resp.StatusCode)) {
+			if attempt < tries-1 && rewind(req) {
+				wait := t.o.Retry.wait(attempt)
 				if resp.StatusCode == http.StatusTooManyRequests {
 					if ra, ok := retryAfter(resp.Header.Get("Retry-After"), time.Now()); ok {
 						wait = ra
 					}
 				}
-				clog.Log.Debugf("%s got status %d (attempt %d/%d), retrying in %s", t.name, resp.StatusCode, attempt+1, t.maxRetry, wait)
+				t.debugf("%s got status %d (attempt %d/%d), retrying in %s", t.o.Name, resp.StatusCode, attempt+1, tries, wait)
 				_ = resp.Body.Close()
 				if !sleep(req.Context(), wait) {
 					return nil, req.Context().Err()
 				}
+
 				continue
 			}
 		}
@@ -209,8 +406,56 @@ func (t *RetryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return resp, nil
 	}
 
-	// unreachable: maxRetry is at least 1, so the loop always returns
+	// unreachable: tries is at least 1, so the loop always returns
 	return resp, err
+}
+
+func (t *RetryTransport) debugf(format string, args ...any) {
+	if t.o.Log != nil {
+		t.o.Log.Debugf(format, args...)
+	}
+}
+
+// rewind puts a request's body back to its start for another attempt,
+// reporting whether it could: a request body is consumed by each attempt,
+// and one with no GetBody cannot be sent twice. http.NoBody counts as no
+// body — NewRequest leaves GetBody nil for it.
+func rewind(req *http.Request) bool {
+	if req.Body == nil || req.Body == http.NoBody {
+		return true
+	}
+	if req.GetBody == nil {
+		return false
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return false
+	}
+	req.Body = body
+
+	return true
+}
+
+// triedError is a request that got no answer however often it was sent,
+// saying how often.
+type triedError struct {
+	err   error
+	tries int
+}
+
+func (e *triedError) Error() string { return fmt.Sprintf("%v (tried %d times)", e.err, e.tries) }
+func (e *triedError) Unwrap() error { return e.err }
+
+// tried says, of a failure that was tried more than once, how many times.
+func tried(err error, tries int) error {
+	if tries < 2 {
+		return err
+	}
+	if _, done := errors.AsType[*triedError](err); done {
+		return err
+	}
+
+	return &triedError{err: err, tries: tries}
 }
 
 // backoff is the exponential wait before the attempt after attempt: 1s, 2s, 4s...
@@ -253,29 +498,3 @@ func retryAfter(value string, now time.Time) (time.Duration, bool) {
 
 	return max(0, min(wait, MaxRetryAfter)), true
 }
-
-// prettyPrintJSON iterates through a []byte line-by-line,
-// transforming any lines that are complete json into pretty-printed json.
-func prettyPrintJSON(b []byte) string {
-	parts := strings.Split(string(b), "\n")
-	for i, p := range parts {
-		if b := []byte(p); json.Valid(b) {
-			var out bytes.Buffer
-			//nolint:errcheck,gosec // json.Indent only fails on invalid input, which json.Valid just ruled out
-			json.Indent(&out, b, "", " ")
-			parts[i] = out.String()
-		}
-	}
-
-	return strings.Join(parts, "\n")
-}
-
-const logReqMsg = `%s API Request Details:
----[ REQUEST ]---------------------------------------
-%s
------------------------------------------------------`
-
-const logRespMsg = `%s API Response Details:
----[ RESPONSE ]--------------------------------------
-%s
------------------------------------------------------`
