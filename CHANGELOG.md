@@ -1,3 +1,10 @@
+## Unreleased
+
+- whitespace: a space that is not the ordinary one is out of place where an ordinary one would be: two no-break spaces are a double space, and one before a colon is a space before a colon
+- whitespace: a space after a file's extension no longer hides one before it; `SplitExt` reads a name without the spaces after it
+- whitespace: `Fixed` is empty when nothing is left of a name but spaces or its extension, where " .mkv" was put right as ".mkv"
+- whitespace: `Visible` marks the ordinary space beside an odd one
+
 ## v0.5.0 (2026-10-09)
 
 - lock (breaking): one call, `lock.By`, locks any mix of things: a record (a value whose type has a `LockID` method), `lock.ID[T](id)` for one known only by its id, `lock.Field(thing, "name")` for a named piece of one, and `lock.String(s)`; `lock.ByString(s)` is short for the last. `ByID`, `ByName`, `MultipleByID`, `MultipleByName` and `NameID` are gone
