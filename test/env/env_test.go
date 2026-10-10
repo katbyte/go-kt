@@ -61,16 +61,19 @@ func TestEnvironment(t *testing.T) {
 	if e.Configured() || e.Recording() || e.Verifying() || e.Container() != "" {
 		t.Error("an empty environment is configured for nothing")
 	}
+	if got := e.Host(); got != "host.docker.internal" {
+		t.Errorf("Host() unset = %q", got)
+	}
 	if port, err := e.ProxyPort(); err != nil || port != DefaultProxyPort {
 		t.Errorf("ProxyPort() unset = %d, %v", port, err)
 	}
 
 	e = fake(map[string]string{
 		"APP_SERVER": "http://localhost:8096", "APP_TOKEN": "t", "APP_TEST_DATA": "/x/testenv/app",
-		"APP_TEST_PROXY_PORT": "18280", "APP_TEST_CONTAINER": "app-test", "OTHER_BACKEND": "emby",
+		"APP_TEST_PROXY_PORT": "18280", "APP_TEST_CONTAINER": "app-test", "APP_TEST_HOST": "172.17.0.1", "OTHER_BACKEND": "emby",
 	})
-	if e.Server() != "http://localhost:8096" || e.Token() != "t" || e.Container() != "app-test" {
-		t.Errorf("server %q, token %q, container %q", e.Server(), e.Token(), e.Container())
+	if e.Server() != "http://localhost:8096" || e.Token() != "t" || e.Container() != "app-test" || e.Host() != "172.17.0.1" {
+		t.Errorf("server %q, token %q, container %q, host %q", e.Server(), e.Token(), e.Container(), e.Host())
 	}
 	if got := e.DataDir(); got != "/x/testenv/app" {
 		t.Errorf("DataDir() = %q", got)
@@ -153,8 +156,8 @@ func TestProxyReport(t *testing.T) {
 	}
 	// and outside a container there is nothing to check or to ask
 	e := fake(nil)
-	if network, err := e.CheckProxyReachable(t.Context(), DefaultProxyPort); network != "" || err != nil {
-		t.Errorf("CheckProxyReachable outside a container = %q, %v", network, err)
+	if network, err := e.CheckReachable(t.Context(), "the replay proxy", DefaultProxyPort); network != "" || err != nil {
+		t.Errorf("CheckReachable outside a container = %q, %v", network, err)
 	}
 	if got := e.ContainerAddresses(t.Context()); got != nil {
 		t.Errorf("ContainerAddresses outside a container = %v", got)
@@ -277,6 +280,86 @@ func TestStartProxy(t *testing.T) {
 	// and so does a proxy with nowhere to keep recordings
 	if _, err := e.StartProxy(t.Context(), replayproxy.Options{}); err == nil {
 		t.Error("StartProxy with no cassette dir started")
+	}
+}
+
+// fakeDocker puts a docker on the PATH that writes what it was asked into the
+// returned file, says what a container would of its network, and exits as
+// FAKE_DOCKER_EXIT says.
+func fakeDocker(t *testing.T) (asked string) {
+	t.Helper()
+
+	bin := t.TempDir()
+	asked = filepath.Join(bin, "asked")
+	script := "#!/bin/sh\necho \"$@\" > \"" + asked + "\"\necho \"proxy env: unset\"\nexit \"${FAKE_DOCKER_EXIT:-0}\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o700); err != nil { //nolint:gosec // a script the test runs
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+
+	return asked
+}
+
+// The container is asked, from inside, whether it can reach a port of this
+// machine by the name the test script gave it, and what it cannot reach is
+// named: a suite with fakes has more than its proxy to check. An image with
+// no tool to probe with is not a failure.
+func TestCheckReachable(t *testing.T) {
+	asked := fakeDocker(t)
+
+	e := fake(map[string]string{"APP_TEST_CONTAINER": "app-test", "APP_TEST_HOST": "172.17.0.1"})
+	network, err := e.CheckReachable(t.Context(), "the fake indexer", 19117)
+	if err != nil || network != "proxy env: unset" {
+		t.Errorf("a port the container reaches = %q, %v", network, err)
+	}
+	got, err := os.ReadFile(asked) //nolint:gosec // a path this test wrote
+	if err != nil {
+		t.Fatal(err)
+	}
+	if args := strings.TrimSpace(string(got)); !strings.HasPrefix(args, "exec app-test sh -c ") || !strings.HasSuffix(args, " sh 172.17.0.1 19117") {
+		t.Errorf("docker was asked %q, want the probe run in app-test against 172.17.0.1 19117", args)
+	}
+
+	t.Setenv("FAKE_DOCKER_EXIT", "3")
+	if _, err := e.CheckReachable(t.Context(), "the fake indexer", 19117); err != nil {
+		t.Errorf("an image with nothing to probe with = %v", err)
+	}
+
+	t.Setenv("FAKE_DOCKER_EXIT", "1")
+	if _, err := e.CheckReachable(t.Context(), "the fake indexer", 19117); err == nil || !strings.Contains(err.Error(), "app-test cannot reach the fake indexer on 172.17.0.1:19117") {
+		t.Errorf("a port the container cannot reach = %v", err)
+	}
+
+	// with no host named it is the one docker provides
+	e = fake(map[string]string{"APP_TEST_CONTAINER": "app-test"})
+	if _, err := e.CheckReachable(t.Context(), "the replay proxy", 18080); err == nil || !strings.Contains(err.Error(), "cannot reach the replay proxy on host.docker.internal:18080") {
+		t.Errorf("with no host named = %v", err)
+	}
+}
+
+// A server that calls out as it starts is started only once the proxy
+// listens, so the proxy comes up beside a container that is not running yet,
+// which StartProxy refuses: it cannot be asked whether it reaches anything.
+func TestListenProxy(t *testing.T) {
+	fakeDocker(t)
+	t.Setenv("FAKE_DOCKER_EXIT", "1") // docker's answer for a container that is not running
+
+	e := fake(map[string]string{"APP_TEST_CONTAINER": "app-test"})
+	opts := replayproxy.Options{CassetteDir: t.TempDir(), Addr: "127.0.0.1:0", CACert: filepath.Join(t.TempDir(), "ca.pem"), CAKey: filepath.Join(t.TempDir(), "ca.key"), Logger: log.New(io.Discard, "", 0)}
+
+	p, err := e.ListenProxy(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(p.Addr(), "127.0.0.1:") {
+		t.Errorf("the proxy listens on %s", p.Addr())
+	}
+	if err := p.Stop(); err != nil {
+		t.Error(err)
+	}
+
+	if _, err := e.StartProxy(t.Context(), opts); err == nil || !strings.Contains(err.Error(), "app-test cannot reach the replay proxy") {
+		t.Errorf("StartProxy beside a container that is not running = %v", err)
 	}
 }
 

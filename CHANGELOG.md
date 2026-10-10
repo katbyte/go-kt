@@ -1,3 +1,10 @@
+## Unreleased
+
+- test/replayproxy: `Serve` takes a host and a path ("clock.example.org/v1/time") to answer that one path from the test while the host's other paths replay: a recorded time of day is wrong from the next day on
+- test/env: `ListenProxy` brings the proxy up without asking the container anything, for a server that calls out as it starts and so is started only once the proxy listens; `StartProxy` is `ListenProxy` and then the check
+- test/env (breaking): `CheckReachable(ctx, what, port)` replaces `CheckProxyReachable(ctx, port)` and names what could not be reached, so a suite can check the port of each service it runs as well as the proxy's
+- test/env: the check probes the name the server was given for the host, `APP_TEST_HOST` (`Host`), where it probed `host.docker.internal` whatever the test script had told the container
+
 ## v0.5.1 (2026-10-09)
 
 - whitespace: a space that is not the ordinary one is out of place where an ordinary one would be: two no-break spaces are a double space, and one before a colon is a space before a colon

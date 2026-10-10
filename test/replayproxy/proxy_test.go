@@ -292,6 +292,57 @@ func TestServeAnswersALocalHost(t *testing.T) {
 	}
 }
 
+// One path of a host a test serves itself - a clock, whose recorded answer is
+// wrong from the next day on - answers from its handler and is never a miss,
+// while every other path of that host is the cassette's to answer; a handler
+// for the path is asked before one for the whole host.
+func TestServeAnswersOnePathOfAHost(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	recording := `{"host":"clock.test","interactions":[{"key":"GET clock.test/v1/update","method":"GET","host":"clock.test","path":"/v1/update","status":200,"body":"recorded update"},{"key":"GET clock.test/v1/time","method":"GET","host":"clock.test","path":"/v1/time","status":200,"body":"recorded time"}]}`
+	if err := os.WriteFile(filepath.Join(dir, hostFile("clock.test")), []byte(recording), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := New(Options{CassetteDir: dir, Addr: loopback, Logger: quiet()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = p.Close() }()
+
+	stop := p.Serve("Clock.Test/v1/time", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "the time now") }))
+
+	for _, u := range []string{"http://clock.test/v1/time", "http://clock.test:8080/v1/time?zone=utc", "https://clock.test/v1/time"} {
+		if status, body := get(t, p, u); status != http.StatusOK || body != "the time now" {
+			t.Errorf("%s = %d %q, want the handler's answer", u, status, body)
+		}
+	}
+	if status, body := get(t, p, "https://clock.test/v1/update"); status != http.StatusOK || body != "recorded update" {
+		t.Errorf("another path of the host = %d %q, want its recording", status, body)
+	}
+	if status, _ := get(t, p, "https://clock.test/v1/Time"); status != http.StatusBadGateway {
+		t.Errorf("a path spelled another way = %d, want a miss: a path is matched as it is written", status)
+	}
+	if misses := p.Misses(); len(misses) != 1 || misses[0] != "GET clock.test/v1/Time" {
+		t.Errorf("misses = %v, want only the path nothing answers", misses)
+	}
+
+	// the path's own handler is asked before the whole host's
+	stopHost := p.Serve("clock.test", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "the whole host") }))
+	if _, body := get(t, p, "https://clock.test/v1/time"); body != "the time now" {
+		t.Errorf("with the host served as well the path = %q", body)
+	}
+	if _, body := get(t, p, "https://clock.test/v1/update"); body != "the whole host" {
+		t.Errorf("with the host served another path = %q", body)
+	}
+	stopHost()
+
+	stop()
+	if status, body := get(t, p, "https://clock.test/v1/time"); status != http.StatusOK || body != "recorded time" {
+		t.Errorf("after stop the path = %d %q, want its recording", status, body)
+	}
+}
+
 // A host the proxy is told to ignore - the server reaching itself - is
 // answered with nothing, by name or by address, with a port or without: it is
 // no miss, it is never fetched, and a recording run writes nothing for it.
