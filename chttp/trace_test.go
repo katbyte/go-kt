@@ -459,3 +459,32 @@ func TestTraceBlanksANameThatEndsAsACredentialDoes(t *testing.T) {
 		}
 	}
 }
+
+// What else writes down what it was sent - a tool's arguments, say - blanks
+// a credential by the rule a trace does: a string field of a name an API
+// passes one under, of a name that ends as a credential's does, or of a name
+// the caller adds, whether the JSON is whole or cut short. Nothing else is
+// touched.
+func TestRedactJSON(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		in   string
+		also []string
+		want string
+	}{
+		{`{"name":"one","password":"hunter2","confirm":true}`, nil, `{"name":"one","password":"REDACTED","confirm":true}`},
+		{`{"apikey":"abc","api_key":"abc","token":"abc","access_token":"abc"}`, nil, `{"apikey":"REDACTED","api_key":"REDACTED","token":"REDACTED","access_token":"REDACTED"}`},
+		{`{"primaryNodePassword": "x", "sharedSecret" : "y", "TmdbApiKey":"z"}`, nil, `{"primaryNodePassword": "REDACTED", "sharedSecret" : "REDACTED", "TmdbApiKey":"REDACTED"}`},
+		{`{"pin":"1234","name":"one"}`, nil, `{"pin":"1234","name":"one"}`},
+		{`{"pin":"1234","name":"one"}`, []string{"PIN"}, `{"pin":"REDACTED","name":"one"}`},
+		{`{"password":"a \"quoted\" one","next":1}`, nil, `{"password":"REDACTED","next":1}`},
+		{`{"name":"one","password":"cut sho`, nil, `{"name":"one","password":"REDACTED"`},
+		{`{"passwords":3,"password":null}`, nil, `{"passwords":3,"password":null}`},
+		{``, nil, ``},
+	} {
+		if got := RedactJSON(tc.in, tc.also...); got != tc.want {
+			t.Errorf("RedactJSON(%s, %v) = %s, want %s", tc.in, tc.also, got, tc.want)
+		}
+	}
+}

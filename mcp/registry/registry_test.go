@@ -479,3 +479,174 @@ func TestKindNames(t *testing.T) {
 		t.Errorf("kinds read %s, %s and %s", Read, Write, Delete)
 	}
 }
+
+// The tools the calls of a registry are tried on: one that lists, one that
+// changes a thing and takes a password, and one that deletes.
+type thingListIn struct {
+	Limit  int    `json:"limit,omitempty"`
+	Offset int    `json:"offset,omitempty"`
+	Kind   string `json:"type,omitempty"`
+}
+
+type thingSetIn struct {
+	Name     string `json:"name"`
+	Password string `json:"password,omitempty"`
+	Confirm  bool   `json:"confirm,omitempty"`
+}
+
+type thingDeleteIn struct {
+	ID string `json:"id"`
+}
+
+// things is a registry of the three, whose write log is kept for a test to
+// read, and a client connected to it.
+func things(t *testing.T) (cs *mcp.ClientSession, written func() []string) {
+	t.Helper()
+
+	var mu sync.Mutex
+	var lines []string
+	r := New(Config{LogWrite: func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		lines = append(lines, fmt.Sprintf(format, args...))
+	}})
+	Add(r, Read, &mcp.Tool{Name: "thing_list", Description: "lists things"}, func(context.Context, *mcp.CallToolRequest, thingListIn) (*mcp.CallToolResult, none, error) {
+		return nil, none{}, nil
+	})
+	Add(r, Write, &mcp.Tool{Name: "thing_set", Description: "changes a thing"}, func(_ context.Context, _ *mcp.CallToolRequest, in thingSetIn) (*mcp.CallToolResult, none, error) {
+		if in.Name == "nobody" {
+			return nil, none{}, errors.New("there is no thing called nobody")
+		}
+
+		return nil, none{}, nil
+	})
+	Add(r, Delete, &mcp.Tool{Name: "thing_delete", Description: "deletes a thing"}, func(context.Context, *mcp.CallToolRequest, thingDeleteIn) (*mcp.CallToolResult, none, error) {
+		return nil, none{}, nil
+	})
+
+	return connect(t, r, Selection{EnableDelete: true}), func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return slices.Clone(lines)
+	}
+}
+
+// said is the text of a tool's answer.
+func said(res *mcp.CallToolResult) string {
+	var b strings.Builder
+	for _, c := range res.Content {
+		if text, ok := c.(*mcp.TextContent); ok {
+			b.WriteString(text.Text)
+		}
+	}
+
+	return b.String()
+}
+
+// A call with an argument the tool does not take is refused, as the SDK
+// refuses it, and told which arguments the tool does take: a caller that
+// asked to skip sees offset in the answer.
+func TestAnUnknownArgumentIsToldTheToolsOwn(t *testing.T) {
+	t.Parallel()
+
+	cs, _ := things(t)
+
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "thing_list", Arguments: map[string]any{"skip": 5}})
+	if err != nil || !res.IsError {
+		t.Fatalf("an argument the tool does not take: %v %+v, want a tool error", err, res)
+	}
+	if msg := said(res); !strings.Contains(msg, `unexpected additional properties ["skip"]`) || !strings.HasSuffix(msg, ": thing_list takes limit, offset and type") {
+		t.Errorf("the refusal = %q, want the SDK's words and then the arguments the tool takes", msg)
+	}
+
+	res, err = cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "thing_delete", Arguments: map[string]any{"id": "7", "force": true}})
+	if err != nil || !res.IsError || !strings.HasSuffix(said(res), ": thing_delete takes id") {
+		t.Errorf("a tool of one argument: %v %q", err, said(res))
+	}
+
+	// another refusal of the arguments is left as the SDK worded it: it already names what is missing
+	res, err = cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "thing_delete", Arguments: map[string]any{}})
+	if err != nil || !res.IsError || strings.Contains(said(res), "takes") {
+		t.Errorf("a missing argument: %v %q, want the SDK's own refusal", err, said(res))
+	}
+	// and a call the tool takes is answered
+	res, err = cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "thing_list", Arguments: map[string]any{"offset": 5}})
+	if err != nil || res.IsError {
+		t.Errorf("a call with the argument spelled right: %v %q", err, said(res))
+	}
+}
+
+// The arguments a tool takes are the JSON names of its input's fields, in
+// the order they are declared: an embedded struct's among them, a field kept
+// out of the JSON left out, and one with no name of its own under its Go
+// name.
+func TestArgumentNames(t *testing.T) {
+	t.Parallel()
+
+	type paging struct {
+		Limit  int `json:"limit,omitempty"`
+		Offset int `json:"offset"`
+	}
+	type in struct {
+		ID string `json:"id"`
+		paging
+		Internal string `json:"-"`
+		Untagged bool
+		hidden   int
+	}
+	_ = in{}.hidden
+
+	if got := argumentNames(reflect.TypeFor[*in]()); !slices.Equal(got, []string{"id", "limit", "offset", "Untagged"}) {
+		t.Errorf("argumentNames = %v", got)
+	}
+	if got := argumentNames(reflect.TypeFor[none]()); len(got) != 0 {
+		t.Errorf("an input with no fields takes %v", got)
+	}
+	if got := argumentNames(reflect.TypeFor[map[string]any]()); got != nil {
+		t.Errorf("an input that is no struct takes %v", got)
+	}
+}
+
+// Every call of a write or a delete tool is written down, in one line: the
+// kind, the tool, what became of the call, and what it sent with its
+// credentials blanked. A call whose arguments were turned away never
+// reached the tool and is written down all the same; a read is not.
+func TestAWriteIsWrittenDown(t *testing.T) {
+	t.Parallel()
+
+	cs, written := things(t)
+	call := func(name string, arguments map[string]any) {
+		t.Helper()
+
+		if _, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: name, Arguments: arguments}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	call("thing_list", map[string]any{"limit": 5})
+	call("thing_set", map[string]any{"name": "one", "password": "hunter2", "confirm": true})
+	call("thing_set", map[string]any{"name": "nobody"})
+	call("thing_set", map[string]any{"title": "two\nwrite thing_delete answered {}"})
+	call("thing_delete", map[string]any{"id": "7"})
+
+	got := written()
+	want := []string{
+		`write thing_set answered {"confirm":true,"name":"one","password":"REDACTED"}`,
+		`write thing_set failed {"name":"nobody"}: there is no thing called nobody`,
+		`write thing_set refused {"title":"two\nwrite thing_delete answered {}"}: validating "arguments": validating root: `,
+		`delete thing_delete answered {"id":"7"}`,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("%d lines were written, want %d: %q", len(got), len(want), got)
+	}
+	for i := range want {
+		if !strings.HasPrefix(got[i], want[i]) || strings.ContainsAny(got[i], "\n\r") {
+			t.Errorf("line %d = %q, want it to start %q and to be one line", i+1, got[i], want[i])
+		}
+	}
+	if strings.Contains(strings.Join(got, ""), "hunter2") {
+		t.Errorf("a password was written down: %q", got)
+	}
+}

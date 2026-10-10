@@ -17,6 +17,7 @@ package registry
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"runtime/debug"
@@ -25,7 +26,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/katbyte/go-kt/chttp"
 	"github.com/katbyte/go-kt/clog"
+	"github.com/katbyte/go-kt/outside"
 )
 
 // Kind is what a tool does to the server it works on.
@@ -98,6 +101,10 @@ type Config struct {
 	// clog.Log.Errorf, which writes to stderr - stdout carries the protocol
 	// itself when serving stdio.
 	LogError func(format string, args ...any)
+	// LogWrite is where one line is written for every call of a write or a
+	// delete tool: the tool, what the call sent with its credentials
+	// blanked, and what became of it. nil is clog.Log.Infof.
+	LogWrite func(format string, args ...any)
 }
 
 // Selection is what one session asks for.
@@ -136,7 +143,10 @@ type pending struct {
 	name        string
 	kind        Kind
 	description string
-	register    func(*mcp.Server)
+	// arguments are the names of the arguments the tool takes, in the
+	// order its input declares them
+	arguments []string
+	register  func(*mcp.Server)
 }
 
 // Registry collects an application's tools before any is registered, so a
@@ -180,8 +190,37 @@ func Add[In, Out any](r *Registry, kind Kind, t *mcp.Tool, h mcp.ToolHandlerFor[
 		name:        t.Name,
 		kind:        kind,
 		description: t.Description,
+		arguments:   argumentNames(reflect.TypeFor[In]()),
 		register:    func(server *mcp.Server) { mcp.AddTool(server, t, wrapped) },
 	})
+}
+
+// argumentNames is the arguments a tool takes: the JSON names of its input's
+// fields, in the order they are declared, those of an embedded struct among
+// them. An input that is no struct names none.
+func argumentNames(t reflect.Type) []string {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+
+	var names []string
+	for f := range t.Fields() {
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		switch {
+		case name == "-", !f.IsExported() && !f.Anonymous:
+		case f.Anonymous && name == "":
+			names = append(names, argumentNames(f.Type)...)
+		case name == "":
+			names = append(names, f.Name)
+		default:
+			names = append(names, name)
+		}
+	}
+
+	return names
 }
 
 // recovered calls a handler, turning a panic into an ordinary tool error.
@@ -246,16 +285,118 @@ func (r *Registry) Register(server *mcp.Server, sel Selection) ([]string, error)
 	}
 
 	var registered []string
+	tools := map[string]pending{}
 	for _, p := range r.pending {
 		if !keep[p.name] {
 			continue
 		}
 		p.register(server)
 		registered = append(registered, p.name)
+		tools[p.name] = p
 	}
 	slices.Sort(registered)
+	server.AddReceivingMiddleware(r.calls(tools))
 
 	return registered, nil
+}
+
+// The ways a call of a write or a delete tool ends, as LogWrite names them.
+// Whether a call that was answered changed anything or showed what it would
+// is the tool's to say, with an argument of its own such as confirm or
+// dry_run, which the line carries.
+const (
+	// outcomeRefused is a call whose arguments were turned away before the
+	// tool ran.
+	outcomeRefused = "refused"
+	// outcomeFailed is a call the tool ran and answered with an error.
+	outcomeFailed = "failed"
+	// outcomeAnswered is a call the tool ran and answered.
+	outcomeAnswered = "answered"
+)
+
+// The most of a call's arguments, and of an error, that a line of LogWrite
+// carries.
+const (
+	loggedArguments = 2000
+	loggedError     = 300
+)
+
+// calls stands between a client and every call of a tool, which is the one
+// place that sees a call whose arguments never reached the tool. It tells a
+// caller who sent an argument the tool does not take which ones it does,
+// and it writes a line for every call of a write or a delete tool.
+func (r *Registry) calls(tools map[string]pending) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			call, ok := req.(*mcp.CallToolRequest)
+			if method != "tools/call" || !ok || call.Params == nil {
+				return next(ctx, method, req)
+			}
+			p, known := tools[call.Params.Name]
+			if !known {
+				return next(ctx, method, req)
+			}
+
+			result, err := next(ctx, method, req)
+			outcome, failure := outcomeAnswered, err
+			if err != nil {
+				outcome = outcomeFailed
+			}
+			if res, answered := result.(*mcp.CallToolResult); answered && err == nil && res != nil && res.IsError {
+				outcome, failure = outcomeFailed, res.GetError()
+				if failure != nil && strings.HasPrefix(failure.Error(), `validating "arguments":`) {
+					outcome = outcomeRefused
+					nameArguments(res, p)
+				}
+			}
+			if p.kind != Read {
+				r.logWrite(p, call.Params.Arguments, outcome, failure)
+			}
+
+			return result, err
+		}
+	}
+}
+
+// nameArguments adds the arguments a tool takes to its refusal of one it
+// does not: the SDK says which argument was not expected, and a caller that
+// mistyped offset is not helped by that alone.
+func nameArguments(res *mcp.CallToolResult, p pending) {
+	refusal := res.GetError().Error()
+	if !strings.Contains(refusal, "unexpected additional properties") {
+		return
+	}
+
+	takes := "no arguments"
+	switch n := len(p.arguments); {
+	case n == 1:
+		takes = p.arguments[0]
+	case n > 1:
+		takes = strings.Join(p.arguments[:n-1], ", ") + " and " + p.arguments[n-1]
+	}
+	res.Content = []mcp.Content{&mcp.TextContent{Text: refusal + ": " + p.name + " takes " + takes}}
+}
+
+// logWrite writes the line for one call of a write or a delete tool. What
+// the call sent is written with its credentials blanked, by the rule a trace
+// of a request hides them by, and with nothing in it that does not show, so
+// a line is a line whatever was sent.
+func (r *Registry) logWrite(p pending, arguments json.RawMessage, outcome string, failure error) {
+	log := r.cfg.LogWrite
+	if log == nil {
+		log = clog.Log.Infof
+	}
+
+	sent := "{}"
+	if len(arguments) > 0 {
+		sent = outside.Text(chttp.RedactJSON(string(arguments)), loggedArguments)
+	}
+	if failure != nil {
+		log("%s %s %s %s: %s", p.kind, p.name, outcome, sent, outside.Text(failure.Error(), loggedError))
+
+		return
+	}
+	log("%s %s %s %s", p.kind, p.name, outcome, sent)
 }
 
 // Describe lists the tools a selection would register, by name, with
