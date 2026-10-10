@@ -146,6 +146,34 @@ func TestTruncationOf(t *testing.T) {
 	}
 }
 
+func TestInitialsOf(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		short, long string
+		want        bool
+	}{
+		{"c z dunn", "christian dunn", true},
+		{"j k rowling", "joanne rowling", true},
+		{"j smith", "john smith", true},
+		{"john smith", "j smith", true},         // either may carry the initial
+		{"é dumas", "émile dumas", true},        // one letter, however many bytes
+		{"jim dale", "jim dole", false},         // another last name
+		{"j smith", "john smyth", false},        // an initial of the first name, and another last name
+		{"chris dunn", "christian dunn", false}, // a shortened first name is not an initial
+		{"joe hill", "joey w hill", false},      // two people
+		{"dunn", "christian dunn", false},       // one word is not a name with initials
+		{"a lee", "b lee", false},               // two different initials
+		{"j li", "john li", false},              // a last name too short to tell people apart by
+		{"j smith", "j smith", false},           // the same
+		{"j smith", "j r smith", false},         // both initials: nothing was reduced
+	} {
+		if got := InitialsOf(tc.short, tc.long); got != tc.want {
+			t.Errorf("InitialsOf(%q, %q) = %v, want %v", tc.short, tc.long, got, tc.want)
+		}
+	}
+}
+
 func TestWordSlips(t *testing.T) {
 	t.Parallel()
 

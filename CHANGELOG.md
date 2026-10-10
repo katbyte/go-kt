@@ -1,3 +1,15 @@
+## Unreleased
+
+- lock (breaking): one call, `lock.By`, locks any mix of things: a record (a value whose type has a `LockID` method), `lock.ID[T](id)` for one known only by its id, `lock.Field(thing, "name")` for a named piece of one, and `lock.String(s)`; `lock.ByString(s)` is short for the last. `ByID`, `ByName`, `MultipleByID`, `MultipleByName` and `NameID` are gone
+- lock: add `lock.NewSet`, a set of locks of its own with the same calls and `Idle`, for an application that holds more than one server and for a test
+- mcp/registry (breaking): an allow list beside toolsets adds to them, "these sets and these tools as well", where it used to narrow them and refuse a name they did not hold; a deny list is how a toolset is narrowed. On its own an allow list is still only the tools it names
+- spelling: add `InitialsOf`, two names that are one person with a first name reduced to its initial; extracted from abs-mcp
+- chttp (breaking): imports only the standard library and logs nothing unless handed a logger: `chttp.New(chttp.Options{Log: clog.Log})` replaces `NewHTTPClient(name)`, and `NewTransport`, `NewRetryTransport` and `NewBaseTransport` take `Options`
+- chttp (breaking): by default a request is sent again for a 429, a 502, 503 or 504 and a dropped connection, and no longer for a plain 500, a server that cannot be reached or a timeout; what is worth another try, how often and how long after are set in `Options.Retry`. `DefaultMaxRetry` is `DefaultTries`
+- chttp: a trace no longer shows credentials (the Authorization and cookie headers, any name that ends in password, secret, token or api_key, and whatever the application adds) and never reads more of a body than it prints, so a download stays a stream
+- chttp: add `Fetch`, which reads an answer whole up to a limit and asks again for one that stops part way; `Tries`, how often a request was sent; `Dropped` and `Refused`, to say which failures are worth another try; `Options.HeaderWait`, for an API that is slow to start answering; and `Options.Base`, a transport of the caller's own underneath
+- chttp: add `RefuseRedirects`, a redirect policy that follows none and says why, and `IsWebPage`, a page answering where an API's own answer was expected; extracted from abs-mcp and technitium-mcp
+
 ## v0.4.0 (2026-10-09)
 
 - add `parallel`: runs a batch of jobs a few at a time and stops at the first error; extracted from abs-mcp and embyfin-mcp

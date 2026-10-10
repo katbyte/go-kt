@@ -1,18 +1,23 @@
 package chttp
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"syscall"
 	"testing"
 )
 
-// refused is the error of a dial the system refused with "no route to host",
+// noRoute is the error of a dial the system refused with "no route to host",
 // as an http.Client hands it back.
-func refused() error {
+func noRoute() error {
 	return &url.Error{Op: "Get", URL: "https://nas.invalid/api", Err: fmt.Errorf("dial tcp 10.0.0.4:443: connect: %w", syscall.EHOSTUNREACH)}
 }
 
@@ -22,7 +27,7 @@ func refused() error {
 func TestExplainSaysWhatAMacMayBeDoing(t *testing.T) {
 	t.Parallel()
 
-	err := refused()
+	err := noRoute()
 	got := Explain(err)
 	if !errors.Is(got, syscall.EHOSTUNREACH) {
 		t.Errorf("explained, the error is no longer the one it wraps: %v", got)
@@ -67,12 +72,79 @@ func TestTransportExplainsARefusedDial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := NewTransport("test", failing{fmt.Errorf("connect: %w", syscall.EHOSTUNREACH)}).RoundTrip(req)
+	resp, err := NewTransport(Options{Name: "test"}, failing{fmt.Errorf("connect: %w", syscall.EHOSTUNREACH)}).RoundTrip(req)
 	if resp != nil {
 		_ = resp.Body.Close()
 	}
 	if err == nil || !errors.Is(err, syscall.EHOSTUNREACH) || !strings.HasSuffix(err.Error(), "no route to host"+localNetworkHint) {
 		t.Errorf("err = %v, want the refused dial with the system's hint after it", err)
+	}
+}
+
+// timeoutError is an error that says it is a wait that ran out.
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "timeout awaiting response headers" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }
+
+// A dropped connection is one that was there and went. What the next try
+// would meet again is not one.
+func TestDropped(t *testing.T) {
+	t.Parallel()
+
+	for name, err := range map[string]error{
+		"reset by the other end":              &net.OpError{Op: "read", Net: "tcp", Err: os.NewSyscallError("read", syscall.ECONNRESET)},
+		"a write to a closed connection":      &url.Error{Op: "Post", URL: "http://nas/api", Err: fmt.Errorf("write tcp: %w", syscall.EPIPE)},
+		"aborted":                             fmt.Errorf("read: %w", syscall.ECONNABORTED),
+		"an answer that stopped part way":     fmt.Errorf("reading the answer: %w", io.ErrUnexpectedEOF),
+		"an answer that never started":        &url.Error{Op: "Get", URL: "http://nas/api", Err: io.EOF},
+		"a connection closed under the read":  fmt.Errorf("read tcp: %w", net.ErrClosed),
+		"net/http's words for an idle close":  errors.New("http: server closed idle connection"),
+		"http2's words for a server leaving":  errors.New("http2: server sent GOAWAY and closed the connection"),
+		"http2's words for a lost connection": errors.New("http2: client connection lost"),
+		"a stream a proxy gave up":            errors.New("stream error: stream ID 5; INTERNAL_ERROR; received from peer"),
+		"a stream the server cancelled":       errors.New("stream error: stream ID 7; CANCEL; received from peer"),
+		"a stream the server would not take":  errors.New("stream error: stream ID 9; REFUSED_STREAM"),
+	} {
+		if !Dropped(err) {
+			t.Errorf("%s (%v) is not taken for a dropped connection", name, err)
+		}
+	}
+
+	for name, err := range map[string]error{
+		"no error":                         nil,
+		"a server that is not there":       &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)},
+		"no route to it":                   fmt.Errorf("connect: %w", syscall.EHOSTUNREACH),
+		"a name that did not resolve":      &net.DNSError{Err: "no such host", Name: "nas.invalid", IsNotFound: true},
+		"a wait that ran out":              &url.Error{Op: "Get", URL: "http://nas/api", Err: timeoutError{}},
+		"a wait that ran out on a reset":   fmt.Errorf("%w: %w", timeoutError{}, syscall.ECONNRESET),
+		"a request that was cancelled":     fmt.Errorf("Get: %w", context.Canceled),
+		"a deadline that passed":           fmt.Errorf("Get: %w", context.DeadlineExceeded),
+		"a certificate that did not hold":  errors.New("tls: failed to verify certificate: x509: certificate signed by unknown authority"),
+		"an answer that is not HTTP":       errors.New("net/http: HTTP/1.x transport connection broken: malformed HTTP response"),
+		"a stream reset for a broken rule": errors.New("stream error: stream ID 5; PROTOCOL_ERROR; received from peer"),
+		"an error that names a code alone": errors.New("the server said: INTERNAL_ERROR; CANCEL"),
+	} {
+		if Dropped(err) {
+			t.Errorf("%s (%v) is taken for a dropped connection", name, err)
+		}
+	}
+}
+
+// A refused connection is nothing listening, which is told apart from a
+// connection that dropped so that a caller can ask for either.
+func TestRefused(t *testing.T) {
+	t.Parallel()
+
+	refusal := &url.Error{Op: "Get", URL: "http://nas/api", Err: &net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}}
+	if !Refused(refusal) || Dropped(refusal) {
+		t.Errorf("a refused connection: Refused %v, Dropped %v, want it refused and not dropped", Refused(refusal), Dropped(refusal))
+	}
+	for name, err := range map[string]error{"no error": nil, "a reset": fmt.Errorf("read: %w", syscall.ECONNRESET), "no route": fmt.Errorf("connect: %w", syscall.EHOSTUNREACH), "a wait that ran out": timeoutError{}} {
+		if Refused(err) {
+			t.Errorf("%s (%v) is taken for a refused connection", name, err)
+		}
 	}
 }
 
@@ -241,5 +313,77 @@ func TestPreview(t *testing.T) {
 	}
 	if Preview(nil) != "" {
 		t.Error("no body has a preview")
+	}
+}
+
+// A redirect is refused, not followed: the request fails saying where it was
+// sent and what to do, and nothing is asked of the address it was sent to.
+func TestRefuseRedirects(t *testing.T) {
+	t.Parallel()
+
+	var followed []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/zones/create" {
+			http.Redirect(w, r, "/login?next=zones&token=s3cret", http.StatusFound)
+
+			return
+		}
+		followed = append(followed, r.Method+" "+r.URL.Path)
+	}))
+	defer srv.Close()
+
+	client := &http.Client{CheckRedirect: RefuseRedirects("set the server url to the address the console itself answers on")}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL+"/api/zones/create", strings.NewReader("zone=example.test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Do(req)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+
+	want := "POST /api/zones/create was redirected to " + srv.URL + "/login?next=zones&token=REDACTED: set the server url to the address the console itself answers on"
+	if err == nil || !strings.HasSuffix(err.Error(), want) {
+		t.Errorf("a redirected write = %v, want it refused with %q", err, want)
+	}
+	if refusal, ok := errors.AsType[*RedirectError](err); !ok || refusal.Method != http.MethodPost || refusal.Path != "/api/zones/create" {
+		t.Errorf("the refusal is %#v, want a RedirectError of the request that was redirected", refusal)
+	}
+	if len(followed) != 0 {
+		t.Errorf("the redirect was followed: %v", followed)
+	}
+
+	// with no advice to give it says where, and stops there
+	bare := RefuseRedirects("")(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "https://kt:s3cret@elsewhere.invalid/page", http.NoBody), []*http.Request{httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://nas.invalid/api/me", http.NoBody)})
+	if bare.Error() != "GET /api/me was redirected to https://kt:xxxxx@elsewhere.invalid/page" { //nolint:gosec // an invented password, hidden: the point of the test
+		t.Errorf("with no advice the refusal reads %q", bare)
+	}
+}
+
+// A page is told from an API's answer by how it starts, whatever it is
+// labelled; a label of HTML alone is not enough, since a server's own
+// one-word reply can carry it.
+func TestIsWebPage(t *testing.T) {
+	t.Parallel()
+
+	for name, c := range map[string]struct {
+		contentType, body string
+		want              bool
+	}{
+		"a page":                               {"text/html; charset=utf-8", "<!DOCTYPE html><html><body>Sign in</body></html>", true},
+		"a page with no doctype":               {"text/html", "\n  <HTML><head>", true},
+		"a page a proxy labelled as JSON":      {"application/json", "<!doctype html>\n<title>502</title>", true},
+		"a page with no label at all":          {"", "<html lang=\"en\">", true},
+		"a fragment labelled as a page":        {"TEXT/HTML", "<div class=\"login\">", true},
+		"a server's one word, labelled HTML":   {"text/html; charset=utf-8", "OK", false},
+		"JSON":                                 {"application/json", `{"ok":true}`, false},
+		"JSON labelled HTML":                   {"text/html", `{"ok":true}`, false},
+		"a feed":                               {"text/xml", "<?xml version=\"1.0\"?><rss>", false},
+		"nothing":                              {"text/html", "", false},
+		"a page that starts far into the body": {"application/json", strings.Repeat(" ", 600) + "<html>", false},
+	} {
+		if got := IsWebPage(c.contentType, []byte(c.body)); got != c.want {
+			t.Errorf("%s: IsWebPage(%q, %q) = %v, want %v", name, c.contentType, c.body[:min(len(c.body), 40)], got, c.want)
+		}
 	}
 }
