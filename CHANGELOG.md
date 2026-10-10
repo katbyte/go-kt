@@ -1,5 +1,8 @@
 ## Unreleased
 
+- add `test/services/arrserver`: the servers a Sonarr, Radarr or Prowlarr calls home to, as a handler for a live suite to put behind its proxy: the update server, which is asked once a build is two weeks old, and the clock, whose recorded answer is wrong the next day; prowlarr-mcp's, brought over
+- add `test/services/newznab`: Newznab and Torznab indexers for a live suite to run beside the server under test, any number on one listener, each usenet or torrent, with a catalogue the test changes as it goes and failures it sets; a release says its title and category, and the date and the torrent size it does not say are picked from a spread by a seed that can be given again, so no test leans on one made-up value; the three indexers of sonarr-mcp, radarr-mcp and prowlarr-mcp made one
+- add `test/services/sabnzbd`: a SABnzbd for a live suite to run beside the server under test, a download client that downloads nothing and whose jobs the test progresses, pauses, completes with the files it names, or fails; sonarr-mcp's, brought over
 - mcp/registry (breaking): `Hints.OpenWorld` is `Hints.SendsOut`, and it is for a tool that itself sends something to a person or a service beyond the server, an email or a notification; a tool that makes the server fetch from its own providers or hand work to its own download client is not one
 - mcp/acctest: `DecimalOr0` reads a fraction that may be absent, 0 when it is, beside `NumOr0`, which reads 1.5 as 1
 - test/replayproxy: `Serve` takes a host and a path ("clock.example.org/v1/time") to answer that one path from the test while the host's other paths replay: a recorded time of day is wrong from the next day on

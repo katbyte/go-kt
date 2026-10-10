@@ -26,6 +26,9 @@ The small packages every katbyte command-line tool needs, kept in one place inst
 | [`mcp/acctest`](mcp/acctest) | a test suite that drives an MCP server as a client does, and fails when a tool was never seen to work |
 | [`test/replayproxy`](test/replayproxy) | what a server under test fetches from the internet, recorded once and replayed in CI |
 | [`test/env`](test/env) | a live suite's surroundings: its environment variables, its replay proxy, and files laid out where the server's container reads them |
+| [`test/services/arrserver`](test/services/arrserver) | the servers a Sonarr, Radarr or Prowlarr calls home to, for a live suite to answer itself: the update server, the clock and the notices, none of which can be recorded once and replayed |
+| [`test/services/newznab`](test/services/newznab) | Newznab and Torznab indexers for a live suite to run beside the server under test: the test decides which releases exist, sees every request, and makes an indexer fail, flake, slow down or refuse its key |
+| [`test/services/sabnzbd`](test/services/sabnzbd) | a SABnzbd for a live suite: a download client that downloads nothing, whose jobs the test progresses, pauses, completes with the files it names, or fails |
 
 ## Usage
 
