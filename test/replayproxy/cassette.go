@@ -212,6 +212,10 @@ func newStore(dir string) (*store, error) {
 		dirty:  map[string]bool{},
 	}
 
+	if dir == "" {
+		return s, nil // a proxy that keeps no recordings
+	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {

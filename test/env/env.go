@@ -142,6 +142,11 @@ func (e Env) Host() string {
 type Proxy struct {
 	proxy     *replayproxy.Proxy
 	recordVar string
+	// advice is what the report says to do about a miss, when it is not to
+	// record it: the suite's own hint, or that the suite keeps no
+	// recordings, which unrecorded says it does
+	advice     string
+	unrecorded bool
 	// Misses are the requests replay had no recording for, and Drifts the
 	// answers that changed shape since recording (when verifying); both are
 	// read when the proxy is stopped
@@ -178,6 +183,10 @@ func (e Env) StartProxy(ctx context.Context, opts replayproxy.Options) (*Proxy, 
 // neither recorded nor replayed, so the suite starts the container only once
 // this returns.
 //
+// A suite with no opts.CassetteDir keeps no recordings: its server is kept
+// from the internet, the suite answers what it asks (Serve), and a miss is
+// told so rather than told to record.
+//
 // The environment decides how it runs and where it listens: opts.Mode is
 // Env.Mode whatever it was set to; an empty opts.Addr is every interface on
 // ProxyPort; and with no authority named, the files ca.pem and ca.key under
@@ -186,6 +195,9 @@ func (e Env) StartProxy(ctx context.Context, opts replayproxy.Options) (*Proxy, 
 // reaches itself on (ContainerAddresses) are added to opts.IgnoreHosts. The
 // rest - the cassettes, what to redact, what else to ignore - is the suite's.
 func (e Env) ListenProxy(ctx context.Context, opts replayproxy.Options) (*Proxy, error) {
+	// to record is the advice for a miss unless the suite gave its own or
+	// has nowhere to record to
+	advised := opts.RecordHint != "" || opts.CassetteDir == ""
 	opts, err := e.proxyOptions(ctx, opts)
 	if err != nil {
 		return nil, err
@@ -196,7 +208,12 @@ func (e Env) ListenProxy(ctx context.Context, opts replayproxy.Options) (*Proxy,
 		return nil, err
 	}
 
-	return &Proxy{proxy: p, recordVar: e.Var("TEST_RECORD")}, nil
+	proxy := &Proxy{proxy: p, recordVar: e.Var("TEST_RECORD"), unrecorded: opts.CassetteDir == ""}
+	if advised {
+		proxy.advice = opts.RecordHint
+	}
+
+	return proxy, nil
 }
 
 // proxyOptions is a suite's options for its proxy with what the environment
@@ -218,7 +235,13 @@ func (e Env) proxyOptions(ctx context.Context, opts replayproxy.Options) (replay
 	if ca := e.Get("TEST_PROXY_CA"); ca != "" && opts.CACert == "" && opts.CAKey == "" {
 		opts.CACert, opts.CAKey = filepath.Join(ca, "ca.pem"), filepath.Join(ca, "ca.key")
 	}
-	if opts.RecordHint == "" {
+	switch {
+	case opts.RecordHint != "":
+	case opts.CassetteDir == "":
+		// a suite that keeps the server from the internet has nothing to
+		// record: a request no handler answers is one to answer, or to stop
+		opts.RecordHint = noRecordingsHint
+	default:
 		opts.RecordHint = "record it with " + e.Var("TEST_RECORD") + "=1, which records only what is missing"
 	}
 	// the server reaching itself is nothing a recording is about
@@ -226,6 +249,10 @@ func (e Env) proxyOptions(ctx context.Context, opts replayproxy.Options) (replay
 
 	return opts, nil
 }
+
+// noRecordingsHint is what a miss is told when the suite has no cassettes:
+// recording is not what mends it.
+const noRecordingsHint = "this suite keeps no recordings: answer it from the suite, or find what started asking for it"
 
 // Addr is the address the proxy listens on.
 func (p *Proxy) Addr() string { return p.proxy.Addr() }
@@ -259,7 +286,8 @@ func (p *Proxy) Stop() error {
 
 // Report says what a stopped proxy saw that fails a run, "" for nothing: a
 // replay miss means a test ran against a 502 rather than a recording, so it
-// is said loudly even when the assertions happened to survive it, and a drift
+// is said loudly even when the assertions happened to survive it, with what
+// to do about one - record it, or the suite's own hint - and a drift
 // (collected when verifying alone) means a service still answers, but no
 // longer in the shape that was recorded.
 func (p *Proxy) Report() string {
@@ -268,11 +296,19 @@ func (p *Proxy) Report() string {
 	}
 	var b strings.Builder
 	if len(p.Misses) > 0 {
-		fmt.Fprintf(&b, "\nreplay proxy: %d request(s) had no recording:\n", len(p.Misses))
+		lacked := "recording"
+		if p.unrecorded {
+			lacked = "answer"
+		}
+		fmt.Fprintf(&b, "\nreplay proxy: %d request(s) had no %s:\n", len(p.Misses), lacked)
 		for _, m := range p.Misses {
 			fmt.Fprintln(&b, "  "+m)
 		}
-		fmt.Fprintf(&b, "record them with %s=1, which records only what is missing\n", p.recordVar)
+		if p.advice != "" {
+			fmt.Fprintln(&b, p.advice)
+		} else {
+			fmt.Fprintf(&b, "record them with %s=1, which records only what is missing\n", p.recordVar)
+		}
 	}
 	if len(p.Drifts) > 0 {
 		fmt.Fprintf(&b, "\nreplay proxy: %d response(s) changed shape since recording:\n", len(p.Drifts))

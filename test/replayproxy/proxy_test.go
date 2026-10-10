@@ -631,12 +631,39 @@ func TestAuthorityOnDiskIsMintedOnceAndReused(t *testing.T) {
 	}
 }
 
-// A proxy needs somewhere to keep its recordings.
-func TestNewNeedsACassetteDir(t *testing.T) {
+// A proxy that records or verifies needs somewhere to keep its recordings.
+// One that only replays may have none at all: it is for a suite that keeps
+// its server from the internet and answers what it asks itself, so what a
+// handler answers is answered and anything else is a miss.
+func TestAProxyWithNoRecordings(t *testing.T) {
 	t.Parallel()
 
-	if p, err := New(Options{}); err == nil {
-		_ = p.Close()
-		t.Error("New with no cassette dir started a proxy")
+	for _, mode := range []Mode{Record, Rerecord, Verify} {
+		if p, err := New(Options{Mode: mode, Addr: loopback, Logger: quiet()}); err == nil || !strings.Contains(err.Error(), "CassetteDir") {
+			if p != nil {
+				_ = p.Close()
+			}
+			t.Errorf("a proxy in mode %d with no cassette dir = %v, want it refused for having nowhere to keep recordings", mode, err)
+		}
+	}
+
+	p, err := New(Options{Addr: loopback, Logger: quiet()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := p.Serve("home.test", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "from the suite") }))
+	defer stop()
+
+	if status, body := get(t, p, "https://home.test/v1/time"); status != http.StatusOK || body != "from the suite" {
+		t.Errorf("a host the suite answers = %d %q", status, body)
+	}
+	if status, _ := get(t, p, "https://elsewhere.test/v1/time"); status != http.StatusBadGateway {
+		t.Errorf("a host nothing answers = %d, want a miss", status)
+	}
+	if misses := p.Misses(); len(misses) != 1 || misses[0] != "GET elsewhere.test/v1/time" {
+		t.Errorf("misses = %v", misses)
+	}
+	if err := p.Close(); err != nil {
+		t.Errorf("closing a proxy with no recordings: %v", err)
 	}
 }

@@ -147,6 +147,11 @@ func TestProxyReport(t *testing.T) {
 	if got := p.Report(); !strings.Contains(got, "1 response(s) changed shape") || !strings.Contains(got, "status 200 -> 404") || !strings.Contains(got, "APP_TEST_RECORD=all") {
 		t.Errorf("a drift reported %q", got)
 	}
+	// a suite that gave its own hint, or keeps no recordings, is told that and not to record
+	p = &Proxy{recordVar: "APP_TEST_RECORD", advice: "answer it from the suite", Misses: []string{"GET api.example.org/v1/things/1"}}
+	if got := p.Report(); !strings.HasSuffix(got, "  GET api.example.org/v1/things/1\nanswer it from the suite\n") || strings.Contains(got, "APP_TEST_RECORD") {
+		t.Errorf("a miss with advice of the suite's own reported %q", got)
+	}
 	// stopping what was never started is harmless
 	if err := p.Stop(); err != nil {
 		t.Error(err)
@@ -179,6 +184,10 @@ func TestProxyOptions(t *testing.T) {
 	}
 	if got.RecordHint != "record it with APP_TEST_RECORD=1, which records only what is missing" || !slices.Equal(got.IgnoreHosts, []string{"self.test"}) {
 		t.Errorf("hint %q, ignored hosts %v", got.RecordHint, got.IgnoreHosts)
+	}
+	// a suite with no cassettes has nothing to record, and a miss is not told to
+	if none, err := fake(nil).proxyOptions(t.Context(), replayproxy.Options{}); err != nil || none.RecordHint != noRecordingsHint {
+		t.Errorf("with no cassette dir the hint = %q, %v", none.RecordHint, err)
 	}
 
 	e := fake(map[string]string{"APP_TEST_RECORD": "all", "APP_TEST_PROXY_PORT": "18280", "APP_TEST_PROXY_CA": "/x/ca"})
@@ -277,9 +286,60 @@ func TestStartProxy(t *testing.T) {
 	if _, err := fake(map[string]string{"APP_TEST_PROXY_PORT": "many"}).StartProxy(t.Context(), replayproxy.Options{CassetteDir: cassettes}); err == nil {
 		t.Error("StartProxy with a port that is no number started")
 	}
-	// and so does a proxy with nowhere to keep recordings
-	if _, err := e.StartProxy(t.Context(), replayproxy.Options{}); err == nil {
-		t.Error("StartProxy with no cassette dir started")
+	// and so does a proxy told to record with nowhere to keep recordings
+	if _, err := fake(map[string]string{"APP_TEST_RECORD": "1"}).StartProxy(t.Context(), replayproxy.Options{Addr: "127.0.0.1:0"}); err == nil {
+		t.Error("StartProxy told to record with no cassette dir started")
+	}
+}
+
+// A suite that keeps no recordings has a proxy all the same: what it answers
+// itself is answered, and what nothing answers is a miss that says to answer
+// it or find what asked, never to record; a suite's own hint is said the
+// same way, in the log and in the report.
+func TestProxyWithNoRecordings(t *testing.T) {
+	t.Parallel()
+
+	e := fake(map[string]string{"APP_TEST_PROXY_CA": filepath.Join(t.TempDir(), "ca")})
+	var logged lockedLog
+	p, err := e.StartProxy(t.Context(), replayproxy.Options{Addr: "127.0.0.1:0", Logger: log.New(&logged, "", 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://api.example.org/v1/things/1", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := (&http.Client{Transport: p.Transport()}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("a request nothing answers = %d, want 502", resp.StatusCode)
+	}
+
+	if err := p.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Report(); !strings.Contains(got, "1 request(s) had no answer:\n  GET api.example.org/v1/things/1") || !strings.Contains(got, "keeps no recordings") || strings.Contains(got, "APP_TEST_RECORD") {
+		t.Errorf("the report = %q, want the miss and that the suite keeps no recordings", got)
+	}
+	if got := logged.String(); !strings.Contains(got, "keeps no recordings") || strings.Contains(got, "APP_TEST_RECORD") {
+		t.Errorf("the log = %q", got)
+	}
+
+	// a suite with recordings and a hint of its own is told its hint
+	own, err := e.ListenProxy(t.Context(), replayproxy.Options{CassetteDir: t.TempDir(), Addr: "127.0.0.1:0", RecordHint: "run make record", Logger: log.New(io.Discard, "", 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := own.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	own.Misses = []string{"GET api.example.org/v1/things/2"}
+	if got := own.Report(); !strings.HasSuffix(got, "run make record\n") {
+		t.Errorf("the report of a suite with its own hint = %q", got)
 	}
 }
 

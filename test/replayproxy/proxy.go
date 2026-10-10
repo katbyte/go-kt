@@ -121,7 +121,10 @@ type Proxy struct {
 type Options struct {
 	// Mode defaults to Replay.
 	Mode Mode
-	// CassetteDir holds one JSON file per host.
+	// CassetteDir holds one JSON file per host. Empty is a proxy with no
+	// recordings at all, for a suite that keeps its server from the
+	// internet and answers what it asks itself (Serve): it replays alone,
+	// and what no handler answers is a miss.
 	CassetteDir string
 	// Addr to listen on. Must be reachable from the container, so bind all
 	// interfaces (e.g. ":18080").
@@ -167,8 +170,8 @@ type Options struct {
 // New starts a proxy and returns it. Close stops it and, when it records,
 // flushes the cassettes.
 func New(opts Options) (*Proxy, error) {
-	if opts.CassetteDir == "" {
-		return nil, errors.New("replayproxy: CassetteDir is required")
+	if opts.CassetteDir == "" && opts.Mode != Replay {
+		return nil, errors.New("replayproxy: a proxy that records or verifies needs a CassetteDir to keep its recordings in")
 	}
 	if opts.Addr == "" {
 		opts.Addr = "0.0.0.0:0"

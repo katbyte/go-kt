@@ -1,3 +1,8 @@
+## Unreleased
+
+- test/replayproxy: a proxy with no `CassetteDir` keeps no recordings and replays alone, for a suite that keeps its server from the internet and answers what it asks itself; one that records or verifies still needs somewhere to keep them
+- test/env: a miss says what to do about it in the suite's own words when it gave a `RecordHint`, in the report at the end of a run as well as in the log, and a suite with no recordings is told that a request had no answer, and to answer it or find what asked, where both were told it had no recording and to record one
+
 ## v0.6.1 (2026-10-10)
 
 - add `outside`: text that came from outside, a release's name or a file's or a description anyone can write, made safe to hand a model: `Text` takes out every character that does not show (control and format characters, among them the zero-width ones and those that override the direction text runs in, and the tag characters and variation selectors a message can be hidden in) and cuts what is left to a length
