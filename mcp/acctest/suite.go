@@ -1,12 +1,6 @@
-// Package acctest drives an MCP server the way a client does, for a suite
-// that runs against a live one: calls that count what they covered, readers
-// for the decoded answers, waits on what a server does in the background,
-// put-backs for what a test changed, and a watch on everything the tools
-// say for a credential the suite gave the server.
-//
-// Nothing here knows an app's tools or fixtures. What a suite needs of the
-// server under test itself - its environment, the proxy its lookups go
-// through, files laid out where it reads them - is in test/env.
+// Package acctest drives an MCP server the way a client does, for a suite against a live one: calls counted for coverage, readers for the answers,
+// waits on background work, put-backs for what a test changed, and a watch on everything the tools say for a key the suite gave the server. What a
+// suite needs of the server itself, its environment and proxy, is in test/env.
 package acctest
 
 import (
@@ -23,32 +17,25 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Suite is one client session to the server under test, and the record of
-// what it was asked.
+// Suite is one client session to the server under test, and the record of what it was asked.
 type Suite struct {
-	// Ctx is the run's own context, not a test's: a test's is cancelled
-	// before its clean-ups run, which is when a put-back calls
+	// Ctx is the run's context, not a test's, which is cancelled before the clean-ups that put things back run
 	Ctx     context.Context //nolint:containedctx // the run's own context, which every call the suite makes is under
 	Session *mcp.ClientSession
-	// Ready says the server is there to be called; a test that calls when it
-	// is not skips, saying NotReady
+	// Ready says the server is there; a test that calls when it is not skips, saying NotReady
 	Ready    bool
 	NotReady string
-	// CannotAnswer are the tools a throwaway server gives nothing to answer
-	// with, so a call that fails is the only one a test can make, and why
+	// CannotAnswer are the tools a throwaway server cannot answer, and why, so a failed call is all a test can make of them
 	CannotAnswer map[string]string
 
 	mu     sync.Mutex
 	called map[string]Calls
-	// secrets are what everything a tool says is read for, and shown the
-	// places one was found, each once
+	// secrets is what every answer is read for; shown where one was found
 	secrets []string
 	shown   []string
 }
 
-// Connect serves an MCP server in this process and returns a suite holding a
-// client session to it, ready to be called: the tools are driven as a client
-// drives them, with nothing between but the protocol.
+// Connect serves the server in this process and returns a suite with a client session to it, so the tools are driven as a client drives them.
 func Connect(ctx context.Context, server *mcp.Server) (*Suite, error) {
 	st, ct := mcp.NewInMemoryTransports()
 	if _, err := server.Connect(ctx, st, nil); err != nil {
@@ -62,9 +49,7 @@ func Connect(ctx context.Context, server *mcp.Server) (*Suite, error) {
 	return &Suite{Ctx: ctx, Session: session, Ready: true}, nil
 }
 
-// Calls is how a tool's calls through Invoke went: the ones that answered,
-// and the ones that failed - a refusal the test asked for, or an error it did
-// not.
+// Calls is how a tool's calls went: answered, or failed.
 type Calls struct {
 	Answered, Failed int
 }
@@ -77,9 +62,7 @@ func (s *Suite) Calls(name string) Calls {
 	return s.called[name]
 }
 
-// Invoke calls a tool and returns its structured result. Every tool call in
-// a suite comes through here, so this is also where coverage is recorded: an
-// answer and a failure are counted apart (see Uncovered).
+// Invoke calls a tool and returns its structured answer. Every call comes through here, so this is where coverage is counted (Uncovered).
 func (s *Suite) Invoke(name string, args map[string]any) (map[string]any, error) {
 	out, err := s.callTool(name, args)
 
@@ -126,8 +109,7 @@ func (s *Suite) callTool(name string, args map[string]any) (map[string]any, erro
 	return out, nil
 }
 
-// Call invokes a tool, skipping the test when the server is not there and
-// failing it when the tool errors.
+// Call invokes a tool, skipping the test when the server is not there and failing it on an error.
 func (s *Suite) Call(t *testing.T, name string, args map[string]any) map[string]any {
 	t.Helper()
 
@@ -157,9 +139,7 @@ func (s *Suite) CallErr(t *testing.T, name string, args map[string]any) string {
 	return err.Error()
 }
 
-// ToolNames lists every tool the server registered, so a test can assert
-// that a family is complete rather than only that the tools it knows about
-// work.
+// ToolNames lists every tool the server registered, so a test can hold a family complete.
 func (s *Suite) ToolNames(t *testing.T) []string {
 	t.Helper()
 
@@ -178,13 +158,8 @@ func (s *Suite) ToolNames(t *testing.T) []string {
 	return out
 }
 
-// Uncovered names the registered tools no test has seen answer: those never
-// called at all, and those whose every call failed. A tool that is only
-// listed is not tested, and nor is one only ever refused - that proves it
-// checks what it is given, not that it does its job - so adding a tool
-// without a test of it working fails the suite rather than quietly widening
-// the untested surface. The few that cannot answer (CannotAnswer) need a
-// call all the same.
+// Uncovered names the tools no test saw answer: never called, or only ever failed. A tool only refused proves it checks its input, not that it works,
+// so a new tool without a test fails the suite. Those in CannotAnswer still need a call.
 func (s *Suite) Uncovered() (never, onlyFailed []string, err error) {
 	res, err := s.Session.ListTools(s.Ctx, nil)
 	if err != nil {
@@ -211,11 +186,8 @@ func (s *Suite) Uncovered() (never, onlyFailed []string, err error) {
 	return never, onlyFailed, nil
 }
 
-// CoverageReport is Uncovered as a suite's TestMain prints it once the tests
-// have run: "" when every registered tool answered something, and otherwise
-// the tools that were never called and the ones that only ever failed. A run
-// that got "" back with a nil error may pass. Only a whole run can say a tool
-// was never called (WholeRun).
+// CoverageReport is Uncovered as TestMain prints it: "" when every tool answered, else the tools never called and those that only failed. Only a
+// whole run can say a tool was never called (WholeRun).
 func (s *Suite) CoverageReport() (string, error) {
 	never, onlyFailed, err := s.Uncovered()
 	if err != nil {
@@ -243,18 +215,9 @@ func (s *Suite) CoverageReport() (string, error) {
 	return b.String(), nil
 }
 
-// Secret has everything a tool answers or refuses with, from here on, read
-// for a credential, and returns it, so a test wraps a key where it hands it
-// to the server: "apiKey": suite.Secret(key). It is for a key the suite
-// gives the server to keep, and for the server's own. A server hands such a
-// key back where nobody thinks to test, in the words of a test that failed
-// or in a field it does not mark as one, so no test has to look: every call
-// through the suite is read, and LeakReport says what was shown. A secret
-// that is empty cannot be looked for, and is reported as that.
-//
-// It is the suite Connect returned that is given its secrets: one a harness
-// made to stand in until then is another suite, and what that was given is
-// not carried over.
+// Secret has everything a tool says from now on read for a key, and hands the key back, so a test wraps a key where it gives it to the server:
+// "apiKey": suite.Secret(key). A server hands a key back where nobody thinks to test, so every call is read and LeakReport says what was shown. An
+// empty secret is reported, not ignored. Give secrets to the suite Connect returned, not to a stand-in made before it.
 func (s *Suite) Secret(secret string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -269,17 +232,9 @@ func (s *Suite) Secret(secret string) string {
 	return secret
 }
 
-// LeakReport is what a suite's TestMain prints once the tests have run of
-// the secrets it was given (Secret): "" when nothing a tool answered or
-// refused with carried one, and otherwise each place one was shown, with
-// the tool that showed it, where in what it said, and the secret itself
-// left out. A run that got "" back may pass. Unlike CoverageReport it holds
-// for a filtered run as well: it takes no test to think of the tool that
-// shows a key.
-//
-// A suite that called tools and was given no secret at all read nothing,
-// and the report says that and is not "": it is what a secret given to
-// another suite than the one that made the calls looks like.
+// LeakReport is what TestMain prints of the secrets given (Secret): "" when none was shown, else each place one was, with the tool and where in its
+// words, the secret itself left out. It holds for a filtered run too. A suite that called tools and was given no secret reports that rather than "",
+// since that is what a secret given to a stand-in looks like.
 func (s *Suite) LeakReport() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -305,13 +260,12 @@ func (s *Suite) LeakReport() string {
 // hidden stands in a report for the secret that was found.
 const hidden = "[the secret]"
 
-// said is a piece of text in what a tool said, and where in it.
+// said is a piece of text a tool said, and where.
 type said struct {
 	where, text string
 }
 
-// watch reads what a call of a tool was answered, or refused with, for each
-// secret, and keeps the first place each was found in.
+// watch reads a call's answer or refusal for each secret and keeps the first place each was found.
 func (s *Suite) watch(name string, res *mcp.CallToolResult, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -358,10 +312,8 @@ func (s *Suite) show(place string) {
 	}
 }
 
-// everyText is every piece of text in a decoded answer, however deep, a
-// map's names among them, each with the names it is under, added to into. A
-// list's rows are all under the one name, so that the same field of two
-// rows is one place.
+// everyText adds to into every piece of text in a decoded answer, a map's names included, each with the names it is under; a list's rows share one
+// name so the same field of two rows is one place.
 func everyText(v any, under string, into []said) []said {
 	switch v := v.(type) {
 	case string:
@@ -383,9 +335,7 @@ func everyText(v any, under string, into []said) []said {
 	return into
 }
 
-// WholeRun reports whether this test binary was asked for every test: with a
-// -run or -skip filter the tools the filtered-out tests call go uncalled,
-// which says nothing about coverage.
+// WholeRun reports whether every test was asked for: under -run or -skip an uncalled tool says nothing about coverage.
 func WholeRun() bool {
 	return unfiltered(func(name string) string {
 		if f := flag.Lookup(name); f != nil {
@@ -401,14 +351,11 @@ func unfiltered(flagValue func(name string) string) bool {
 	return flagValue("test.run") == "" && flagValue("test.skip") == ""
 }
 
-// retryWaits is how long Retried waits before each try: backing off, for
-// about a minute in all. One server refused to remove a library for longer
-// than ten seconds after a scan.
+// retryWaits is how long Retried waits before each try, about a minute in all: one server refused a removal for over ten seconds after a scan.
 var retryWaits = []time.Duration{0, time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 15 * time.Second, 15 * time.Second, 15 * time.Second}
 
-// Retried calls a tool until it succeeds, backing off for about a minute in
-// all: a server can refuse a write while work of its own holds the record. It
-// returns the last error.
+// Retried calls a tool until it succeeds, for about a minute: a server can refuse a write while its own work holds the record. It returns the last
+// error.
 func (s *Suite) Retried(tool string, args map[string]any) error {
 	return s.retryWith(retryWaits, tool, args)
 }
@@ -425,9 +372,7 @@ func (s *Suite) retryWith(waits []time.Duration, tool string, args map[string]an
 	return err
 }
 
-// PutBack calls a tool once the test ends, to undo what the test changed,
-// and reports one that never succeeds rather than leaving the change for the
-// tests after.
+// PutBack calls a tool once the test ends to undo what it changed, and reports one that never succeeds.
 func (s *Suite) PutBack(t *testing.T, tool string, args map[string]any) {
 	t.Helper()
 
@@ -443,9 +388,8 @@ func (s *Suite) Undo(t *testing.T, tool string, args map[string]any) {
 	}
 }
 
-// DeleteLaterIfThere deletes what a test made once it ends, unless the test
-// deleted it itself: an answer that it is gone (gone, e.g. "no collection
-// named") is no failure. Any other is reported, as PutBack does.
+// DeleteLaterIfThere deletes what a test made once it ends, unless the test already did: an answer containing gone ("no collection named") is fine,
+// any other failure is reported.
 func (s *Suite) DeleteLaterIfThere(t *testing.T, tool string, args map[string]any, gone string) {
 	t.Helper()
 

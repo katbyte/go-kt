@@ -1,7 +1,5 @@
-// Package addresses blanks what an address in a piece of text may carry a
-// credential in. It is the one rule behind outside.BlankAddresses and behind
-// what mcp/registry writes down of a call and hands back of a failure, kept
-// here so that the registry can be told what was blanked as well.
+// Package addresses blanks what an address in text may carry a credential in: the one rule behind outside.BlankAddresses and the registry's write
+// line, kept here so the registry can also be told what was blanked.
 package addresses
 
 import (
@@ -9,30 +7,18 @@ import (
 	"strings"
 )
 
-// Blanked stands for a value that is not shown, as it does in a trace of a
-// request.
+// Blanked stands for a value that is not shown.
 const Blanked = "REDACTED"
 
-// found finds each address in a piece of text: a scheme, "://" and what
-// follows it up to a space, a quote or an angle bracket.
+// found finds each address: a scheme, "://" and what follows up to a space, a quote or an angle bracket.
 var found = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]+`)
 
-// closers are the brackets an address may be written inside, each with the
-// one that closes it.
+// closers are the brackets an address may be written inside.
 var closers = map[byte]byte{'[': ']', '(': ')', '{': '}'}
 
-// Blank is text with what each address in it may carry a credential in
-// blanked, and the rest as it was: who the address signs in as, the value
-// of every parameter after its "?", whose names are someone else's and say
-// nothing of what they hold, and what follows its "#". The host, the path
-// and the parameters' names stay. Each piece blanked is handed to hidden,
-// when there is one.
-//
-// An address written inside brackets, as "at [http://host/api?apikey=...]"
-// is, ends at the bracket that closes them. Any other mark against the end
-// of an address cannot be told from the end of what it carries, and goes
-// with it. A secret in the path itself, as a webhook's is, has no rule to
-// find it by.
+// Blank blanks, in each address in text, who it signs in as, every value after its "?" and what follows its "#", and hands each piece blanked to
+// hidden when given. An address inside brackets ends at the closing one; any other mark against its end goes with the value. A secret in the path has
+// no rule to find it.
 func Blank(text string, hidden func(string)) string {
 	places := found.FindAllStringIndex(text, -1)
 	if places == nil {
@@ -61,7 +47,7 @@ func Blank(text string, hidden func(string)) string {
 	return out.String()
 }
 
-// before is the byte before a place in text, and 0 at its start.
+// before is the byte before a place in text, 0 at its start.
 func before(text string, at int) byte {
 	if at == 0 {
 		return 0
@@ -70,7 +56,7 @@ func before(text string, at int) byte {
 	return text[at-1]
 }
 
-// one is a single address with what it may carry a credential in blanked.
+// one blanks a single address.
 func one(raw string, hidden func(string)) string {
 	rest, fragment, _ := strings.Cut(raw, "#")
 	rest, query, hasQuery := strings.Cut(rest, "?")
