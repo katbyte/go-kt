@@ -1,4 +1,4 @@
-## Unreleased
+## v0.6.1 (2026-10-10)
 
 - add `outside`: text that came from outside, a release's name or a file's or a description anyone can write, made safe to hand a model: `Text` takes out every character that does not show (control and format characters, among them the zero-width ones and those that override the direction text runs in, and the tag characters and variation selectors a message can be hidden in) and cuts what is left to a length
 - mcp/server: add `Instructions`, what a server tells a client that connects: `DefaultInstructions`, the words every server shares, and then the server's own
