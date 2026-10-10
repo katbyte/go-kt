@@ -176,14 +176,19 @@ func TestToolsets(t *testing.T) {
 	}
 }
 
-// An allow list keeps what it names and a deny list takes out what it
-// names, by exact name, by a pattern, or by the essential preset; a name or
-// pattern that reaches no tool is refused, so a typo cannot hide one.
+// On its own an allow list is only the tools it names, and a deny list takes
+// out what it names, by exact name, by a pattern, or by the essential
+// preset; a name or pattern that reaches no tool is refused, so a typo
+// cannot hide one.
 func TestAllowAndDeny(t *testing.T) {
 	t.Parallel()
 
 	if got := register(t, Selection{Allow: []string{"essential"}}); !slices.Equal(got, []string{"item_get", "item_set_state", "library_list", "user_next_up"}) {
 		t.Errorf("essential = %v", got)
+	}
+	// no core is added to an allow list: user_list alone is one tool
+	if got := register(t, Selection{Allow: []string{"user_list"}}); !slices.Equal(got, []string{"user_list"}) {
+		t.Errorf("user_list alone = %v", got)
 	}
 	if got := register(t, Selection{Allow: []string{"library_*,user_list"}, Deny: []string{"*_scan"}}); !slices.Equal(got, []string{"library_create", "library_export", "library_get", "library_list", "user_list"}) {
 		t.Errorf("library_* and user_list, less *_scan = %v", got)
@@ -199,27 +204,55 @@ func TestAllowAndDeny(t *testing.T) {
 	}
 }
 
-// Beside toolsets an allow list narrows them, and a name or pattern reaching
-// no tool they hold is refused, naming the set to add: left out without a
-// word, it read as the tool not existing.
+// Beside toolsets an allow list adds to them: the session gets what the sets
+// hold and the tools named as well, wherever those tools live. A deny list
+// is what narrows a set.
 func TestAnAllowListBesideToolsets(t *testing.T) {
 	t.Parallel()
 
-	if msg := refused(t, Selection{Toolsets: []string{"core"}, Allow: []string{"essential"}}); msg != `allow-tools "essential" names user_next_up, item_set_state, which the toolsets asked for (core) do not hold: add watching to --toolsets, or leave --toolsets out, so the allow list chooses from every tool` {
-		t.Errorf("essential beside core = %q", msg)
+	for name, c := range map[string]struct {
+		sel  Selection
+		want []string
+	}{
+		"a tool of another set":                       {Selection{Toolsets: []string{"core"}, Allow: []string{"library_scan"}}, []string{"item_get", "library_get", "library_list", "library_scan"}},
+		"a pattern reaching other sets":               {Selection{Toolsets: []string{"core"}, Allow: []string{"user_*"}}, []string{"item_get", "library_get", "library_list", "user_list", "user_next_up"}},
+		"the preset beside core":                      {Selection{Toolsets: []string{"core"}, Allow: []string{"essential"}}, []string{"item_get", "item_set_state", "library_get", "library_list", "user_next_up"}},
+		"the preset beside its own set":               {Selection{Toolsets: []string{"watching"}, Allow: []string{"essential"}}, []string{"item_get", "item_set_state", "library_get", "library_list", "user_list", "user_next_up"}},
+		"a pattern the set already holds":             {Selection{Toolsets: []string{"core"}, Allow: []string{"library_get"}}, []string{"item_get", "library_get", "library_list"}},
+		"a pattern beside a set no longer narrows it": {Selection{Toolsets: []string{"core"}, Allow: []string{"library_*"}}, []string{"item_get", "library_create", "library_export", "library_get", "library_list", "library_scan"}},
+		"a deny list narrows a set":                   {Selection{Toolsets: []string{"core"}, Deny: []string{"item_*"}}, []string{"library_get", "library_list"}},
+		"a deny list takes out what was allowed":      {Selection{Toolsets: []string{"core"}, Allow: []string{"user_*"}, Deny: []string{"user_list"}}, []string{"item_get", "library_get", "library_list", "user_next_up"}},
+		"every set, and a tool as well":               {Selection{Toolsets: []string{"all"}, Allow: []string{"user_list"}, EnableDelete: true}, []string{"item_delete", "item_get", "item_send", "item_set_state", "library_create", "library_export", "library_get", "library_list", "library_scan", "user_list", "user_next_up"}},
+		"a delete tool allowed by name stays out":     {Selection{Toolsets: []string{"core"}, Allow: []string{"item_delete"}}, []string{"item_get", "library_get", "library_list"}},
+		"a delete tool allowed, with deletes on":      {Selection{Toolsets: []string{"core"}, Allow: []string{"item_delete"}, EnableDelete: true}, []string{"item_delete", "item_get", "library_get", "library_list"}},
+		"a write tool allowed in a read-only session": {Selection{Toolsets: []string{"core"}, Allow: []string{"library_scan,user_list"}, ReadOnly: true}, []string{"item_get", "library_get", "library_list", "user_list"}},
+	} {
+		if got := register(t, c.sel); !slices.Equal(got, c.want) {
+			t.Errorf("%s: %+v registered %v, want %v", name, c.sel, got, c.want)
+		}
 	}
-	if msg := refused(t, Selection{Toolsets: []string{"core"}, Allow: []string{"library_*,item_get,user_*"}}); !strings.Contains(msg, `allow-tools "user_*" names user_list, user_next_up, which the toolsets asked for (core) do not hold: add watching to --toolsets`) {
-		t.Errorf("user_* beside core = %q", msg)
+
+	// a name that reaches no tool at all is still refused beside a set
+	if msg := refused(t, Selection{Toolsets: []string{"core"}, Allow: []string{"bogus"}}); !strings.HasPrefix(msg, `allow-tools pattern "bogus" matches no tool`) {
+		t.Errorf("a name that matches nothing, beside core = %q", msg)
 	}
-	if msg := refused(t, Selection{Toolsets: []string{"core"}, Allow: []string{"item_delete"}}); !strings.Contains(msg, "add admin to --toolsets") {
-		t.Errorf("item_delete beside core = %q", msg)
+}
+
+// An allow list that asks for nothing is not the same as no allow list: the
+// preset of an application that left it empty registers no tool, where no
+// list at all registers every one.
+func TestAnAllowListThatNamesNothing(t *testing.T) {
+	t.Parallel()
+
+	cfg := config()
+	cfg.Essential = nil
+	got, err := newRegistry(cfg).Register(mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil), Selection{Allow: []string{"essential"}})
+	if err != nil || len(got) != 0 {
+		t.Errorf("an empty preset registered %v (%v), want no tool", got, err)
 	}
-	// what the sets do hold is narrowed to
-	if got := register(t, Selection{Toolsets: []string{"watching"}, Allow: []string{"essential"}}); !slices.Equal(got, []string{"item_get", "item_set_state", "library_list", "user_next_up"}) {
-		t.Errorf("essential beside watching = %v", got)
-	}
-	if got := register(t, Selection{Toolsets: []string{"core"}, Allow: []string{"library_*"}}); !slices.Equal(got, []string{"library_get", "library_list"}) {
-		t.Errorf("library_* beside core = %v, want core's two", got)
+
+	if got := register(t, Selection{Allow: []string{" , "}}); len(got) != 10 {
+		t.Errorf("an allow list of blanks registered %d tools, want all ten that need no delete gate, as with no list", len(got))
 	}
 }
 

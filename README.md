@@ -22,7 +22,7 @@ The small packages every katbyte command-line tool needs, kept in one place inst
 | [`parallel`](parallel) | a batch of jobs run a few at a time, stopped at the first error |
 | [`lock`](lock) | a lock on a record, a named piece of one or a plain string, any mix in one call, so two edits of one thing in one process take turns; one set for the process, or a set of your own |
 | [`mcp/server`](mcp/server) | an MCP server served over stdio, or over HTTP behind a bearer token with a health probe |
-| [`mcp/registry`](mcp/registry) | which tools an MCP session gets: read, write and delete kinds, toolsets, allow and deny lists |
+| [`mcp/registry`](mcp/registry) | which tools an MCP session gets: read, write and delete kinds, toolsets, an allow list that adds tools by name and a deny list that takes them out |
 | [`mcp/acctest`](mcp/acctest) | a test suite that drives an MCP server as a client does, and fails when a tool was never seen to work |
 | [`test/replayproxy`](test/replayproxy) | what a server under test fetches from the internet, recorded once and replayed in CI |
 | [`test/env`](test/env) | a live suite's surroundings: its environment variables, its replay proxy, and files laid out where the server's container reads them |
