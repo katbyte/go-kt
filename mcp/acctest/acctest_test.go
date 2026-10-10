@@ -281,3 +281,90 @@ func TestWaits(t *testing.T) {
 		t.Error("a check that is true at once was not seen")
 	}
 }
+
+// Everything a tool says, an answer or a refusal, is read for each secret
+// the suite was given, from when it was given, whatever test made the call
+// and whether or not it looked. The report names the tool and shows where,
+// under what name or in which words, with the secret itself left out, and
+// each place once.
+func TestSecretsAreWatchedFor(t *testing.T) {
+	t.Parallel()
+
+	s, _ := fakeServer(t)
+	if report := s.LeakReport(); report != "" {
+		t.Errorf("a suite that has called nothing reported %q", report)
+	}
+
+	const key, token = "a-key-nobody-should-be-shown", "a-token-of-the-servers-own"
+	s.Call(t, "greet", map[string]any{"name": key})
+	if report := s.LeakReport(); !strings.Contains(report, "was given no secret to watch for") {
+		t.Errorf("a suite that called a tool and was given no secret reported %q, want it said that nothing was read", report)
+	}
+	if got := s.Secret(key); got != key {
+		t.Errorf("Secret(%q) = %q, want it handed back", key, got)
+	}
+	s.Secret(key)
+	s.Secret(token)
+	if report := s.LeakReport(); report != "" {
+		t.Errorf("what was said before a secret was given was reported: %q", report)
+	}
+
+	s.Call(t, "greet", map[string]any{"name": "nobody"})
+	s.CallErr(t, "refuse", nil)
+	if report := s.LeakReport(); report != "" {
+		t.Errorf("calls that showed no secret were reported: %q", report)
+	}
+
+	s.Call(t, "greet", map[string]any{"name": "the key " + key + " and more"})
+	s.Call(t, "greet", map[string]any{"name": "the key " + key + " and more"})
+	s.CallErr(t, "busy", map[string]any{"name": token})
+
+	report := s.LeakReport()
+	for _, want := range []string{"2 place(s)", "  greet, under greeting: ...hello the key [the secret] and more...", "  busy, in its refusal: ...busy: [the secret] is held by a refresh...", "no tool may show one"} {
+		if !strings.Contains(report, want) {
+			t.Errorf("the report = %q, want %q in it", report, want)
+		}
+	}
+	if strings.Contains(report, key) || strings.Contains(report, token) {
+		t.Errorf("the report shows a secret itself: %q", report)
+	}
+}
+
+// A secret that is empty would be found in everything, so it is not looked
+// for, and the report says one was given: a key a suite read from somewhere
+// and got nothing for must not pass for one that was never shown.
+func TestAnEmptySecretIsReported(t *testing.T) {
+	t.Parallel()
+
+	s, _ := fakeServer(t)
+	s.Secret("")
+	s.Call(t, "greet", map[string]any{"name": "nobody"})
+
+	if report := s.LeakReport(); !strings.Contains(report, "1 place(s)") || !strings.Contains(report, "was empty") {
+		t.Errorf("the report = %q, want the empty secret said", report)
+	}
+}
+
+// A secret is found wherever in an answer it is, in a list, under a name
+// and as a name, and each piece of text is known by the names it is under,
+// the same for every row of a list.
+func TestEveryText(t *testing.T) {
+	t.Parallel()
+
+	got := everyText(map[string]any{"rows": []any{map[string]any{"title": "one", "count": 2.0, "by": map[string]any{"a-key": true}}, map[string]any{"title": "three"}}, "note": "two"}, "", nil)
+	want := []said{
+		{"as a name under note", "note"},
+		{"under note", "two"},
+		{"as a name under rows", "rows"},
+		{"as a name under rows[].by", "by"},
+		{"as a name under rows[].by.a-key", "a-key"},
+		{"as a name under rows[].count", "count"},
+		{"as a name under rows[].title", "title"},
+		{"under rows[].title", "one"},
+		{"as a name under rows[].title", "title"},
+		{"under rows[].title", "three"},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("everyText() = %q, want %q", got, want)
+	}
+}

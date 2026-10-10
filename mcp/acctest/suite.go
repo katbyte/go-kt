@@ -1,7 +1,8 @@
 // Package acctest drives an MCP server the way a client does, for a suite
 // that runs against a live one: calls that count what they covered, readers
-// for the decoded answers, waits on what a server does in the background, and
-// put-backs for what a test changed.
+// for the decoded answers, waits on what a server does in the background,
+// put-backs for what a test changed, and a watch on everything the tools
+// say for a credential the suite gave the server.
 //
 // Nothing here knows an app's tools or fixtures. What a suite needs of the
 // server under test itself - its environment, the proxy its lookups go
@@ -12,6 +13,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -38,6 +40,10 @@ type Suite struct {
 
 	mu     sync.Mutex
 	called map[string]Calls
+	// secrets are what everything a tool says is read for, and shown the
+	// places one was found, each once
+	secrets []string
+	shown   []string
 }
 
 // Connect serves an MCP server in this process and returns a suite holding a
@@ -98,6 +104,7 @@ func (s *Suite) callTool(name string, args map[string]any) (map[string]any, erro
 		args = map[string]any{}
 	}
 	res, err := s.Session.CallTool(s.Ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+	s.watch(name, res, err)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
@@ -234,6 +241,146 @@ func (s *Suite) CoverageReport() (string, error) {
 	fmt.Fprintln(&b, "every tool needs a test that it answers; add one or remove the tool")
 
 	return b.String(), nil
+}
+
+// Secret has everything a tool answers or refuses with, from here on, read
+// for a credential, and returns it, so a test wraps a key where it hands it
+// to the server: "apiKey": suite.Secret(key). It is for a key the suite
+// gives the server to keep, and for the server's own. A server hands such a
+// key back where nobody thinks to test, in the words of a test that failed
+// or in a field it does not mark as one, so no test has to look: every call
+// through the suite is read, and LeakReport says what was shown. A secret
+// that is empty cannot be looked for, and is reported as that.
+//
+// It is the suite Connect returned that is given its secrets: one a harness
+// made to stand in until then is another suite, and what that was given is
+// not carried over.
+func (s *Suite) Secret(secret string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	switch {
+	case secret == "":
+		s.show("a secret given to watch for was empty, so nothing was looked for in its place")
+	case !slices.Contains(s.secrets, secret):
+		s.secrets = append(s.secrets, secret)
+	}
+
+	return secret
+}
+
+// LeakReport is what a suite's TestMain prints once the tests have run of
+// the secrets it was given (Secret): "" when nothing a tool answered or
+// refused with carried one, and otherwise each place one was shown, with
+// the tool that showed it, where in what it said, and the secret itself
+// left out. A run that got "" back may pass. Unlike CoverageReport it holds
+// for a filtered run as well: it takes no test to think of the tool that
+// shows a key.
+//
+// A suite that called tools and was given no secret at all read nothing,
+// and the report says that and is not "": it is what a secret given to
+// another suite than the one that made the calls looks like.
+func (s *Suite) LeakReport() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.shown) == 0 {
+		if len(s.secrets) == 0 && len(s.called) > 0 {
+			return "\nthe suite called tools and was given no secret to watch for, so nothing they said was read: give the suite Connect returned its secrets (Secret)\n"
+		}
+
+		return ""
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n%d place(s) in what the tools said carried a credential the suite gave the server, or the server's own:\n", len(s.shown))
+	for _, place := range s.shown {
+		fmt.Fprintln(&b, "  "+place)
+	}
+	fmt.Fprintln(&b, "no tool may show one: blank it where the tool reads what the server said")
+
+	return b.String()
+}
+
+// hidden stands in a report for the secret that was found.
+const hidden = "[the secret]"
+
+// said is a piece of text in what a tool said, and where in it.
+type said struct {
+	where, text string
+}
+
+// watch reads what a call of a tool was answered, or refused with, for each
+// secret, and keeps the first place each was found in.
+func (s *Suite) watch(name string, res *mcp.CallToolResult, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.secrets) == 0 {
+		return
+	}
+
+	var all []said
+	if res != nil {
+		all = everyText(res.StructuredContent, "", all)
+
+		where := "in its text"
+		if res.IsError {
+			where = "in its refusal"
+		}
+		for _, c := range res.Content {
+			if tc, ok := c.(*mcp.TextContent); ok {
+				all = append(all, said{where, tc.Text})
+			}
+		}
+	}
+	if err != nil {
+		all = append(all, said{"in its failure", err.Error()})
+	}
+
+	for _, secret := range s.secrets {
+		for _, piece := range all {
+			at := strings.Index(piece.text, secret)
+			if at < 0 {
+				continue
+			}
+			s.show(name + ", " + piece.where + ": ..." + strings.ToValidUTF8(piece.text[max(0, at-120):at]+hidden+piece.text[at+len(secret):min(len(piece.text), at+len(secret)+60)], "") + "...")
+
+			break
+		}
+	}
+}
+
+// show keeps a place a secret was found, once.
+func (s *Suite) show(place string) {
+	if !slices.Contains(s.shown, place) {
+		s.shown = append(s.shown, place)
+	}
+}
+
+// everyText is every piece of text in a decoded answer, however deep, a
+// map's names among them, each with the names it is under, added to into. A
+// list's rows are all under the one name, so that the same field of two
+// rows is one place.
+func everyText(v any, under string, into []said) []said {
+	switch v := v.(type) {
+	case string:
+		into = append(into, said{"under " + under, v})
+	case []any:
+		for _, held := range v {
+			into = everyText(held, under+"[]", into)
+		}
+	case map[string]any:
+		for _, name := range slices.Sorted(maps.Keys(v)) {
+			below := name
+			if under != "" {
+				below = under + "." + name
+			}
+			into = everyText(v[name], below, append(into, said{"as a name under " + below, name}))
+		}
+	}
+
+	return into
 }
 
 // WholeRun reports whether this test binary was asked for every test: with a
