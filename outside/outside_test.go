@@ -88,3 +88,19 @@ func TestTextIsCutToALength(t *testing.T) {
 		t.Errorf("a page cut to 200 = %d characters ending %q", utf8.RuneCountInString(got), got[len(got)-12:])
 	}
 }
+
+// A server's words for what went wrong keep everything but what an address
+// in them may carry a credential in, and text with no address in it is as
+// it was.
+func TestBlankAddresses(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct{ text, want string }{
+		{"Unable to connect to indexer. HTTP request failed: [500:InternalServerError] [GET] at [http://host.test/api?t=movie&apikey=st0red-key]", "Unable to connect to indexer. HTTP request failed: [500:InternalServerError] [GET] at [http://host.test/api?t=REDACTED&apikey=REDACTED]"},
+		{"the release Some.Show.S01E01 was not found, see a/b?c=d", "the release Some.Show.S01E01 was not found, see a/b?c=d"},
+	} {
+		if got := BlankAddresses(test.text); got != test.want {
+			t.Errorf("BlankAddresses(%q)\n got %q\nwant %q", test.text, got, test.want)
+		}
+	}
+}

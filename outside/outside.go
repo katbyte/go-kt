@@ -16,12 +16,37 @@
 // whose name holds a character that does not show is not found by the name
 // without it. Leave such a value as it is, or look the thing up by the
 // cleaned form.
+//
+// A server's own words for what went wrong are from outside too, and may
+// quote an address with a credential of the server's on it, a stored key.
+// BlankAddresses is for those words, and not for a link a caller is to
+// follow.
 package outside
 
-import "unicode"
+import (
+	"unicode"
+
+	"github.com/katbyte/go-kt/internal/addresses"
+)
 
 // cut is what text cut short ends with, inside the limit it was cut to.
 const cut = "…"
+
+// BlankAddresses is text with what each address in it may carry a credential
+// in blanked as REDACTED, and the rest as it was: who the address signs in
+// as, the value of every parameter after its "?", and what follows its "#".
+// The host, the path and the parameters' names stay, so the words still say
+// what was asked of whom. Text with no address in it comes back as it was.
+//
+// It is for words someone else wrote about what went wrong, a failed test's
+// reason or a line of a log, where a server quotes the address it called
+// with its own key on the end. It is not for an address a caller is to use,
+// which needs what follows its "?", nor for a value a later call hands
+// back. An address written inside brackets, as "at [http://host/api?...]"
+// is, keeps the bracket that closes them; any other mark against the end of
+// an address cannot be told from the end of what it carries, and goes with
+// it. A secret in an address's path has no rule to find it by and is left.
+func BlankAddresses(text string) string { return addresses.Blank(text, nil) }
 
 // Text is s with what does not show taken out, and no longer than limit
 // characters, ending in an ellipsis where it was cut; a limit of 0 or less
