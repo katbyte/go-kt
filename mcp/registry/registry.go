@@ -15,6 +15,7 @@
 package registry
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -23,11 +24,14 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/katbyte/go-kt/chttp"
 	"github.com/katbyte/go-kt/clog"
+	"github.com/katbyte/go-kt/internal/addresses"
 	"github.com/katbyte/go-kt/outside"
 )
 
@@ -105,6 +109,52 @@ type Config struct {
 	// delete tool: the tool, what the call sent with its credentials
 	// blanked, and what became of it. nil is clog.Log.Infof.
 	LogWrite func(format string, args ...any)
+	// SecretArguments are the names of arguments, at any depth, whose
+	// values LogWrite's line blanks whole, whatever they are, a piece of
+	// text, a list or an object, beside what it blanks unasked: an argument
+	// named as a credential is (chttp.SecretName); everything under an
+	// argument a tool takes as a free-form object, a settings map or a
+	// container's environment, whose names are someone else's to choose and
+	// say nothing of what they hold; and, in an address anywhere in what is
+	// left, who it signs in as and whatever follows its "?" or its "#". It
+	// is for a credential in a plain field under a name of its own: a
+	// cookie, a file's whole text, a command and its flags, an address whose
+	// path is the secret.
+	SecretArguments []string
+	// ShownArguments are the free-form arguments, by tool, that hold no
+	// credential, and whose values LogWrite's line shows as they were sent:
+	// the settings a tool changes by the server's own names, from a list it
+	// checks them against. A name under one that reads as a credential's,
+	// or is among SecretArguments, is blanked all the same.
+	ShownArguments map[string][]string
+	// CleanAnswers, when above 0, has every piece of text in every tool's
+	// answer, and in its refusal, cleaned as text from outside is
+	// (outside.Text) and cut to this many characters: here, once, around
+	// every tool, and not by each tool where it remembers to. Most of what
+	// a tool answers was written by someone else, and one field missed is
+	// the way in. It is off until a server has named what to leave as it
+	// is.
+	CleanAnswers int
+	// LeaveAsIs are the values in an answer that a later call hands back,
+	// by the JSON names they are answered under: a path, a folder, a
+	// release's id. Each has to find the same thing again, so it is
+	// answered as the server holds it, and everything under such a name
+	// with it. What is on this list is not cleaned, so it is for what is
+	// handed back and nothing else (LeaveAsIsUnused).
+	LeaveAsIs []string
+	// BlankAddresses are the values in an answer that are a server's own
+	// words for what went wrong, by the JSON names they are answered under:
+	// a failed test's failures, a health check's message, a log's lines. A
+	// server quotes an address in such words with a credential of its own
+	// on it, a stored key, so each address under such a name, however deep,
+	// is answered as one in a failure is (outside.BlankAddresses): without
+	// who it signs in as, the value of any parameter or what follows its
+	// "#". A tool that puts such words together with its own calls that
+	// itself, on the words before it joins them. It is not for every
+	// answer: a link a caller is to follow needs what follows its "?", and
+	// what is under a name in LeaveAsIs is left as it is here too. A name
+	// no tool answers under blanks nothing (BlankAddressesUnused).
+	BlankAddresses []string
 }
 
 // Selection is what one session asks for.
@@ -146,7 +196,15 @@ type pending struct {
 	// arguments are the names of the arguments the tool takes, in the
 	// order its input declares them
 	arguments []string
-	register  func(*mcp.Server)
+	// loose are the names of the arguments, at any depth, the tool takes
+	// as a free-form object, less the ones Config.ShownArguments says hold
+	// no credential, and looseInput is a tool whose whole input is one
+	loose      map[string]bool
+	looseInput bool
+	// answers are the JSON names of the fields the tool answers with,
+	// however deep
+	answers  map[string]bool
+	register func(*mcp.Server)
 }
 
 // Registry collects an application's tools before any is registered, so a
@@ -155,16 +213,39 @@ type pending struct {
 type Registry struct {
 	cfg     Config
 	pending []pending
+	// leave is Config.LeaveAsIs, and quoted Config.BlankAddresses, to look
+	// a name up in
+	leave  map[string]bool
+	quoted map[string]bool
 }
 
 // New makes an empty registry.
-func New(cfg Config) *Registry { return &Registry{cfg: cfg} }
+func New(cfg Config) *Registry {
+	r := &Registry{cfg: cfg, leave: map[string]bool{}, quoted: map[string]bool{}}
+	for _, name := range cfg.LeaveAsIs {
+		r.leave[name] = true
+	}
+	for _, name := range cfg.BlankAddresses {
+		r.quoted[name] = true
+	}
+
+	return r
+}
 
 // Add queues a typed tool. It sets the tool's MCP annotations from its kind
 // and its hints, so a client can tell a read from a destructive write
 // without parsing descriptions; turns a panic in the handler into an
-// ordinary tool error; and sends every empty collection in an answer as []
-// rather than null, which a client cannot tell from "not fetched".
+// ordinary tool error; sends every empty list in an answer as [] and every
+// empty map as {} rather than null, which a client cannot tell from "not
+// fetched" and the SDK refuses a map for; and, when the registry is set to,
+// cleans every piece of text in the answer or the refusal
+// (Config.CleanAnswers) and takes out of a server's own words in an answer
+// what an address may carry a credential in (Config.BlankAddresses). Once
+// registered, a failure's words reach the caller with what an address in
+// them may carry a credential in taken out (hideAddresses). A tool whose
+// input is any takes no arguments, and is given a schema that says so unless
+// it brings its own: the SDK's for such a tool takes whatever it is sent,
+// and an argument nobody takes is a mistake a caller is owed a refusal for.
 func Add[In, Out any](r *Registry, kind Kind, t *mcp.Tool, h mcp.ToolHandlerFor[In, Out]) {
 	hints := r.cfg.Hints[t.Name]
 	openWorld := hints.SendsOut || hints.Installs
@@ -177,13 +258,26 @@ func Add[In, Out any](r *Registry, kind Kind, t *mcp.Tool, h mcp.ToolHandlerFor[
 		t.Annotations = &mcp.ToolAnnotations{DestructiveHint: new(true), OpenWorldHint: new(openWorld)}
 	}
 
+	if reflect.TypeFor[In]() == reflect.TypeFor[any]() && t.InputSchema == nil {
+		t.InputSchema = map[string]any{"type": "object", "additionalProperties": false}
+	}
+
 	wrapped := func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 		res, out, err := recovered(ctx, r, t.Name, h, req, in)
-		if err == nil {
-			emptyNilSlices(reflect.ValueOf(&out).Elem())
+		if err != nil {
+			return res, out, r.cleanFailure(err)
 		}
 
-		return res, out, err
+		answer := reflect.ValueOf(&out).Elem()
+		emptyNils(answer)
+		r.cleanAnswer(res, answer)
+
+		return res, out, nil
+	}
+
+	loose := looseNames(reflect.TypeFor[In](), map[string]bool{}, map[reflect.Type]bool{})
+	for _, name := range r.cfg.ShownArguments[t.Name] {
+		delete(loose, name)
 	}
 
 	r.pending = append(r.pending, pending{
@@ -191,8 +285,279 @@ func Add[In, Out any](r *Registry, kind Kind, t *mcp.Tool, h mcp.ToolHandlerFor[
 		kind:        kind,
 		description: t.Description,
 		arguments:   argumentNames(reflect.TypeFor[In]()),
+		loose:       loose,
+		looseInput:  freeForm(reflect.TypeFor[In]()),
+		answers:     answerNames(reflect.TypeFor[Out](), map[string]bool{}, map[reflect.Type]bool{}),
 		register:    func(server *mcp.Server) { mcp.AddTool(server, t, wrapped) },
 	})
+}
+
+// freeForm reports whether a type is an object whose names are not the
+// tool's own: a map, or a value of no type at all, or a list of either.
+func freeForm(t reflect.Type) bool {
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
+		t = t.Elem()
+	}
+
+	return t.Kind() == reflect.Map || t.Kind() == reflect.Interface
+}
+
+// looseNames is the JSON names of the fields of an input, however deep, that
+// are free-form objects, added to names. seen keeps a type that holds itself
+// from being walked for ever.
+func looseNames(t reflect.Type, names map[string]bool, seen map[reflect.Type]bool) map[string]bool {
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct || seen[t] {
+		return names
+	}
+	seen[t] = true
+
+	for f := range t.Fields() {
+		name := jsonName(f)
+		switch {
+		case name == "-", !f.IsExported() && !f.Anonymous:
+		case freeForm(f.Type):
+			names[name] = true
+		default:
+			looseNames(f.Type, names, seen)
+		}
+	}
+
+	return names
+}
+
+// jsonName is the name a struct's field is answered under: its JSON tag's,
+// its own when it has no tag, "" for an embedded struct that has none and
+// "-" for a field kept out of the JSON.
+func jsonName(f reflect.StructField) string {
+	name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+	if name == "" && !f.Anonymous {
+		return f.Name
+	}
+
+	return name
+}
+
+// answerNames is the JSON names of the fields a type answers with, however
+// deep, added to names. seen keeps a type that holds itself from being
+// walked for ever.
+func answerNames(t reflect.Type, names map[string]bool, seen map[reflect.Type]bool) map[string]bool {
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Map:
+		answerNames(t.Elem(), names, seen)
+	case reflect.Struct:
+		if seen[t] {
+			return names
+		}
+		seen[t] = true
+		for f := range t.Fields() {
+			name := jsonName(f)
+			if name == "-" || !f.IsExported() && !f.Anonymous {
+				continue
+			}
+			if name != "" {
+				names[name] = true
+			}
+			answerNames(f.Type, names, seen)
+		}
+	default:
+	}
+
+	return names
+}
+
+// LeaveAsIsUnused is the names in Config.LeaveAsIs that no tool answers a
+// field under, in the order they were given. A name left on the list after
+// its field was renamed or dropped leaves nothing as it is and says
+// nothing, so a server's test holds this to none. Only fields are looked
+// for: a value answered under the key of a map is not one, and a name kept
+// for such a key is reported here all the same.
+func (r *Registry) LeaveAsIsUnused() []string { return r.unused(r.cfg.LeaveAsIs) }
+
+// BlankAddressesUnused is the names in Config.BlankAddresses that no tool
+// answers a field under, in the order they were given. A name left on the
+// list after its field was renamed blanks nothing and says nothing, and
+// what the field held is answered as the server wrote it, so a server's
+// test holds this to none. Only fields are looked for, as by
+// LeaveAsIsUnused.
+func (r *Registry) BlankAddressesUnused() []string { return r.unused(r.cfg.BlankAddresses) }
+
+// unused is the names among these that no tool answers a field under.
+func (r *Registry) unused(names []string) []string {
+	var unused []string
+	for _, name := range names {
+		if !slices.ContainsFunc(r.pending, func(p pending) bool { return p.answers[name] }) {
+			unused = append(unused, name)
+		}
+	}
+
+	return unused
+}
+
+// cleanAnswer does to a tool's answer, in place, what the registry is set
+// to: cleans every piece of text in it, the words of a result the tool
+// wrote itself and everything the answer holds (Config.CleanAnswers), and
+// blanks what an address carries in a server's own words
+// (Config.BlankAddresses).
+func (r *Registry) cleanAnswer(res *mcp.CallToolResult, answer reflect.Value) {
+	if r.cfg.CleanAnswers <= 0 && len(r.quoted) == 0 {
+		return
+	}
+
+	if res != nil {
+		for _, c := range res.Content {
+			if text, ok := c.(*mcp.TextContent); ok {
+				text.Text = r.cleaned(text.Text)
+			}
+		}
+	}
+	r.clean(answer, r.cleaned)
+}
+
+// cleaned is a piece of an answer's text cleaned, when the registry is set
+// to, and as it was when it is not.
+func (r *Registry) cleaned(text string) string {
+	if r.cfg.CleanAnswers <= 0 {
+		return text
+	}
+
+	return outside.Text(text, r.cfg.CleanAnswers)
+}
+
+// unquoted is a piece of a server's own words cleaned, and then without
+// what an address in it may carry a credential in: cleaned first, so that a
+// character that does not show cannot keep an address from being read as
+// one.
+func (r *Registry) unquoted(text string) string { return outside.BlankAddresses(r.cleaned(text)) }
+
+// clean does text to each piece of text a value holds, however deep,
+// leaving what is answered under a name in Config.LeaveAsIs, and all that
+// is under it, as it is. Under a name in Config.BlankAddresses the text is
+// done unquoted to. Raw JSON a tool passes on unread is bytes, not text, and
+// is not looked into.
+func (r *Registry) clean(v reflect.Value, text func(string) string) {
+	switch v.Kind() {
+	case reflect.String:
+		if s := text(v.String()); v.CanSet() && s != v.String() {
+			v.SetString(s)
+		}
+	case reflect.Pointer:
+		if !v.IsNil() {
+			r.clean(v.Elem(), text)
+		}
+	case reflect.Interface:
+		// what an interface holds cannot be changed where it is, so a copy
+		// is cleaned and put in its place
+		if v.IsNil() || !v.CanSet() {
+			return
+		}
+		held := reflect.New(v.Elem().Type()).Elem()
+		held.Set(v.Elem())
+		r.clean(held, text)
+		v.Set(held)
+	case reflect.Struct:
+		for i := range v.NumField() {
+			f := v.Type().Field(i)
+			if name := jsonName(f); name != "-" && (f.IsExported() || f.Anonymous) && !r.leave[name] {
+				r.clean(v.Field(i), r.under(name, text))
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		if holdsText(v.Type().Elem()) {
+			for i := range v.Len() {
+				r.clean(v.Index(i), text)
+			}
+		}
+	case reflect.Map:
+		r.cleanMap(v, text)
+	default:
+		// a number, a flag: nothing to clean
+	}
+}
+
+// under is what is done to the text under a name: unquoted when the name
+// is in Config.BlankAddresses, and otherwise what was being done above it.
+func (r *Registry) under(name string, text func(string) string) func(string) string {
+	if r.quoted[name] {
+		return r.unquoted
+	}
+
+	return text
+}
+
+// holdsText reports whether a list of these could hold text: a list of
+// bytes or of numbers is not walked an element at a time to find none.
+func holdsText(elem reflect.Type) bool {
+	switch elem.Kind() {
+	case reflect.String, reflect.Pointer, reflect.Interface, reflect.Struct, reflect.Slice, reflect.Array, reflect.Map:
+		return true
+	default:
+		return false
+	}
+}
+
+// cleanMap cleans what a map holds, and its keys when they are text: a
+// count kept by title has the title for a key. What a map holds cannot be
+// changed where it is, so each value is cleaned as a copy and put back; a
+// key in Config.LeaveAsIs or Config.BlankAddresses is a name like a
+// field's, and what is under it is left, or done unquoted to. The keys are
+// taken in order so that two that clean to the same one leave the same one
+// of them each time.
+func (r *Registry) cleanMap(v reflect.Value, text func(string) string) {
+	if v.IsNil() {
+		return
+	}
+
+	named := v.Type().Key().Kind() == reflect.String
+	keys := v.MapKeys()
+	if named {
+		slices.SortFunc(keys, func(a, b reflect.Value) int { return cmp.Compare(a.String(), b.String()) })
+	}
+	for _, k := range keys {
+		if named && r.leave[k.String()] {
+			continue
+		}
+
+		below := text
+		if named {
+			below = r.under(k.String(), text)
+		}
+		held := reflect.New(v.Type().Elem()).Elem()
+		held.Set(v.MapIndex(k))
+		r.clean(held, below)
+
+		if named {
+			if cleaned := reflect.ValueOf(r.cleaned(k.String())).Convert(k.Type()); cleaned.String() != k.String() && !v.MapIndex(cleaned).IsValid() {
+				v.SetMapIndex(k, reflect.Value{})
+				k = cleaned
+			}
+		}
+		v.SetMapIndex(k, held)
+	}
+}
+
+// cleanedError is a tool's refusal with its words cleaned: an error quotes
+// what it was given and what the server said, and its text is an answer
+// too.
+type cleanedError struct {
+	err   error
+	limit int
+}
+
+func (e cleanedError) Error() string { return outside.Text(e.err.Error(), e.limit) }
+func (e cleanedError) Unwrap() error { return e.err }
+
+// cleanFailure is a tool's error with its words cleaned, when the registry
+// is set to, and the error itself when there is nothing in them to clean.
+func (r *Registry) cleanFailure(err error) error {
+	limit := r.cfg.CleanAnswers
+	if limit <= 0 || outside.Text(err.Error(), limit) == err.Error() {
+		return err
+	}
+
+	return cleanedError{err: err, limit: limit}
 }
 
 // argumentNames is the arguments a tool takes: the JSON names of its input's
@@ -248,17 +613,20 @@ func (r *Registry) logError(format string, args ...any) {
 	clog.Log.Errorf(format, args...)
 }
 
-// emptyNilSlices walks v (structs, pointers, slices) and replaces every
-// settable nil slice with an empty one.
-func emptyNilSlices(v reflect.Value) {
+// emptyNils walks v (structs, pointers, slices) and replaces every settable
+// nil slice with an empty one, and every nil map: a nil slice is sent as
+// null, which a client cannot tell from "not fetched", and a nil map is
+// sent as null where the tool's own schema says an object, which the SDK
+// refuses the whole call for. What a map holds is not walked.
+func emptyNils(v reflect.Value) {
 	switch v.Kind() {
 	case reflect.Pointer:
 		if !v.IsNil() {
-			emptyNilSlices(v.Elem())
+			emptyNils(v.Elem())
 		}
 	case reflect.Struct:
 		for _, f := range v.Fields() {
-			emptyNilSlices(f)
+			emptyNils(f)
 		}
 	case reflect.Slice:
 		if v.IsNil() {
@@ -269,7 +637,11 @@ func emptyNilSlices(v reflect.Value) {
 			return
 		}
 		for i := range v.Len() {
-			emptyNilSlices(v.Index(i))
+			emptyNils(v.Index(i))
+		}
+	case reflect.Map:
+		if v.IsNil() && v.CanSet() {
+			v.Set(reflect.MakeMap(v.Type()))
 		}
 	default:
 	}
@@ -322,9 +694,11 @@ const (
 )
 
 // calls stands between a client and every call of a tool, which is the one
-// place that sees a call whose arguments never reached the tool. It tells a
-// caller who sent an argument the tool does not take which ones it does,
-// and it writes a line for every call of a write or a delete tool.
+// place that sees a call whose arguments never reached the tool, and every
+// failure whoever worded it. It tells a caller who sent an argument the tool
+// does not take which ones it does, it takes out of a failure's words what
+// an address in them may carry a credential in (hideAddresses), and it
+// writes a line for every call of a write or a delete tool.
 func (r *Registry) calls(tools map[string]pending) mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
@@ -348,6 +722,7 @@ func (r *Registry) calls(tools map[string]pending) mcp.Middleware {
 					outcome = outcomeRefused
 					nameArguments(res, p)
 				}
+				hideAddresses(res)
 			}
 			if p.kind != Read {
 				r.logWrite(p, call.Params.Arguments, outcome, failure)
@@ -357,6 +732,196 @@ func (r *Registry) calls(tools map[string]pending) mcp.Middleware {
 		}
 	}
 }
+
+// hideAddresses rewrites the words of a tool's failure, which its caller
+// reads, with each address in them as LogWrite's line shows one
+// (outside.BlankAddresses): without who it signs in as, the value of any
+// parameter, or what follows its "#". A server is apt to quote an address
+// back with a credential of its own on the end of it, an indexer's stored
+// key, and that was never the caller's to be handed. An answer's addresses
+// are left as they are, but for the ones under a name the server gives
+// (Config.BlankAddresses): a caller needs the rest, and a stored secret in
+// an answer is the tool's own to hide.
+func hideAddresses(res *mcp.CallToolResult) {
+	for i, c := range res.Content {
+		text, ok := c.(*mcp.TextContent)
+		if !ok {
+			continue
+		}
+
+		if shown := outside.BlankAddresses(text.Text); shown != text.Text {
+			rewritten := *text
+			rewritten.Text = shown
+			res.Content[i] = &rewritten
+		}
+	}
+}
+
+// blanked stands for a value that is not shown, in LogWrite's line and in a
+// failure's words, as it does in a trace of a request.
+const blanked = addresses.Blanked
+
+// notShown stands in LogWrite's line for arguments that could not be read to
+// blank what is in them, and so are not written at all.
+const notShown = "(arguments that do not read as JSON, not shown)"
+
+// repeated is the least a blanked piece of text is long for a failure that
+// repeats it to have it blanked there too: shorter, and it is a word or a
+// number the failure may well have had anyway, a port or a "true".
+const repeated = 6
+
+// hider blanks what LogWrite's line may not show of one call, and keeps
+// what it blanked.
+type hider struct {
+	// loose are the names everything under which is blanked, and secret
+	// the ones a server names beside those that read as a credential's
+	loose  map[string]bool
+	secret []string
+	// all is a tool whose whole input is free-form, with no names of its
+	// own to go by
+	all bool
+	// hidden are the pieces of text it blanked, to blank again where the
+	// call's failure repeats them
+	hidden []string
+}
+
+// arguments is what a call sent as LogWrite's line may show it. Blanked are
+// each value that is a credential by its name (chttp.SecretName, and
+// Config.SecretArguments), each that is under a free-form object, whose
+// names are not the tool's and cannot be read for what they hold, and what
+// an address carries a credential in (outside.BlankAddresses). The names
+// stay, so the line still says what was sent.
+func (h *hider) arguments(sent json.RawMessage) string {
+	dec := json.NewDecoder(bytes.NewReader(sent))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return notShown
+	}
+
+	if h.all {
+		v = h.blank(v)
+	}
+
+	var out bytes.Buffer
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(h.hide(v)); err != nil {
+		return notShown
+	}
+
+	return strings.TrimSuffix(out.String(), "\n")
+}
+
+// hide is a value with what LogWrite's line may not show blanked: what is
+// under a name that hides it (blank), and what an address in its text
+// carries.
+func (h *hider) hide(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		for name, held := range v {
+			if h.loose[name] || chttp.SecretName(name, h.secret...) {
+				v[name] = h.blank(held)
+
+				continue
+			}
+			v[name] = h.hide(held)
+		}
+
+		return v
+	case []any:
+		for i, held := range v {
+			v[i] = h.hide(held)
+		}
+
+		return v
+	case string:
+		return addresses.Blank(v, h.keep)
+	default:
+		return v
+	}
+}
+
+// blank is a value with everything in it blanked and its names kept, so the
+// line says what was sent and not what it held. Nothing stays nothing.
+func (h *hider) blank(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		for name, held := range v {
+			v[name] = h.blank(held)
+		}
+
+		return v
+	case []any:
+		for i, held := range v {
+			v[i] = h.blank(held)
+		}
+
+		return v
+	case string:
+		h.keep(v)
+
+		return blanked
+	case nil:
+		return nil
+	default:
+		return blanked
+	}
+}
+
+// keep takes a piece of text that was blanked, to blank again where the
+// call's failure repeats it.
+func (h *hider) keep(piece string) { h.hidden = append(h.hidden, piece) }
+
+// failure is what a call failed with as LogWrite's line may show it: each
+// address in it blanked as one in the arguments is, and each piece of text
+// that was blanked in the arguments blanked here too, since a failure is apt
+// to repeat what it was sent: the address it could not reach, the value it
+// would not take.
+func (h *hider) failure(text string) string {
+	text = addresses.Blank(text, h.keep)
+
+	slices.SortFunc(h.hidden, func(a, b string) int { return cmp.Compare(len(b), len(a)) })
+	for _, secret := range h.hidden {
+		if len(secret) >= repeated {
+			text = blankWhole(text, secret)
+		}
+	}
+
+	return text
+}
+
+// blankWhole is text with secret blanked wherever it stands by itself, with
+// no letter or digit against an end of it that is one: "require" where a
+// failure repeats "sslmode=require", and not in "required".
+func blankWhole(text, secret string) string {
+	first, _ := utf8.DecodeRuneInString(secret)
+	last, _ := utf8.DecodeLastRuneInString(secret)
+
+	var out strings.Builder
+	for {
+		at := strings.Index(text, secret)
+		if at < 0 {
+			break
+		}
+		end := at + len(secret)
+
+		before, _ := utf8.DecodeLastRuneInString(text[:at])
+		after, _ := utf8.DecodeRuneInString(text[end:])
+		if (wordy(first) && wordy(before)) || (wordy(last) && wordy(after)) {
+			out.WriteString(text[:end])
+		} else {
+			out.WriteString(text[:at] + blanked)
+		}
+		text = text[end:]
+	}
+	out.WriteString(text)
+
+	return out.String()
+}
+
+// wordy reports whether a character is part of a word: a letter or a digit.
+func wordy(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
 
 // nameArguments adds the arguments a tool takes to its refusal of one it
 // does not: the SDK says which argument was not expected, and a caller that
@@ -378,21 +943,23 @@ func nameArguments(res *mcp.CallToolResult, p pending) {
 }
 
 // logWrite writes the line for one call of a write or a delete tool. What
-// the call sent is written with its credentials blanked, by the rule a trace
-// of a request hides them by, and with nothing in it that does not show, so
-// a line is a line whatever was sent.
+// the call sent, and what it failed with, are written with their
+// credentials blanked (hider), and with nothing in them that does not show,
+// so a line is a line whatever was sent. The blanking comes before the
+// cutting to length, which could otherwise cut a name from its value.
 func (r *Registry) logWrite(p pending, arguments json.RawMessage, outcome string, failure error) {
 	log := r.cfg.LogWrite
 	if log == nil {
 		log = clog.Log.Infof
 	}
 
+	h := hider{loose: p.loose, secret: r.cfg.SecretArguments, all: p.looseInput}
 	sent := "{}"
 	if len(arguments) > 0 {
-		sent = outside.Text(chttp.RedactJSON(string(arguments)), loggedArguments)
+		sent = outside.Text(h.arguments(arguments), loggedArguments)
 	}
 	if failure != nil {
-		log("%s %s %s %s: %s", p.kind, p.name, outcome, sent, outside.Text(failure.Error(), loggedError))
+		log("%s %s %s %s: %s", p.kind, p.name, outcome, sent, outside.Text(h.failure(failure.Error()), loggedError))
 
 		return
 	}

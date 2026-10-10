@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -389,8 +390,9 @@ func TestMatchPattern(t *testing.T) {
 }
 
 // A nil slice in an answer must be sent as [], so a client can tell "none"
-// from "not fetched".
-func TestEmptyNilSlices(t *testing.T) {
+// from "not fetched", and a nil map as {}, which the tool's schema says it
+// is.
+func TestEmptyNils(t *testing.T) {
 	t.Parallel()
 
 	type inner struct{ Tags []string }
@@ -400,24 +402,30 @@ func TestEmptyNilSlices(t *testing.T) {
 		Names  []string
 		Nested [][]string
 		Keep   []string
+		ByName map[string]inner
+		Held   map[string]int
 	}
-	v := out{Items: []inner{{}}, Ptr: &inner{}, Keep: []string{"x"}}
-	emptyNilSlices(reflect.ValueOf(&v).Elem())
+	v := out{Items: []inner{{}}, Ptr: &inner{}, Keep: []string{"x"}, Held: map[string]int{"x": 1}}
+	emptyNils(reflect.ValueOf(&v).Elem())
 
 	if v.Names == nil || v.Nested == nil || v.Items[0].Tags == nil || v.Ptr.Tags == nil {
 		t.Errorf("nil slices survived: %+v", v)
 	}
-	if len(v.Keep) != 1 {
-		t.Error("a populated slice was touched")
+	if v.ByName == nil {
+		t.Errorf("a nil map survived: %+v", v)
+	}
+	if len(v.Keep) != 1 || v.Held["x"] != 1 {
+		t.Error("a populated slice or map was touched")
 	}
 }
 
 type listOut struct {
-	Names []string `json:"names"`
+	Names  []string          `json:"names"`
+	ByName map[string]string `json:"by_name"`
 }
 
-// Through a served tool an empty list reaches the client as [], and a
-// handler that panics answers its call with an error naming the tool and
+// Through a served tool an empty list reaches the client as [] and an empty
+// map as {}, and a handler that panics answers its call with an error naming the tool and
 // logs the stack, rather than ending the session: the next call is served.
 func TestAServedToolSendsEmptyListsAndSurvivesAPanic(t *testing.T) {
 	t.Parallel()
@@ -469,6 +477,9 @@ func TestAServedToolSendsEmptyListsAndSurvivesAPanic(t *testing.T) {
 	out, ok := res.StructuredContent.(map[string]any)
 	if names, isList := out["names"].([]any); !ok || !isList || len(names) != 0 {
 		t.Errorf("an empty list reached the client as %v, want names: []", res.StructuredContent)
+	}
+	if byName, isMap := out["by_name"].(map[string]any); !isMap || len(byName) != 0 {
+		t.Errorf("an empty map reached the client as %v, want by_name: {}", res.StructuredContent)
 	}
 }
 
@@ -648,5 +659,592 @@ func TestAWriteIsWrittenDown(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(got, ""), "hunter2") {
 		t.Errorf("a password was written down: %q", got)
+	}
+}
+
+// What the cleaning of answers is tried on: text at every depth a tool might
+// answer it at, with a character that does not show in each piece of it,
+// written by its number so that this file holds none.
+const (
+	dirty   = "Zzyzx\u200b Road"
+	cleaned = "Zzyzx Road"
+)
+
+type dirtyKind string
+
+type dirtyRow struct {
+	Title string `json:"title"`
+	Path  string `json:"path"`
+}
+
+type dirtyPaging struct {
+	Next string `json:"next"`
+}
+
+type dirtyOut struct {
+	dirtyPaging
+
+	Title    string         `json:"title"`
+	Long     string         `json:"long"`
+	Path     string         `json:"path"`
+	Kind     dirtyKind      `json:"kind"`
+	Count    int            `json:"count"`
+	Tags     []string       `json:"tags"`
+	Rows     []dirtyRow     `json:"rows"`
+	First    *dirtyRow      `json:"first"`
+	ByTitle  map[string]int `json:"by_title"`
+	Extra    any            `json:"extra"`
+	Folders  []string       `json:"folders"`
+	Internal string         `json:"-"`
+}
+
+// dirtyTools is a registry of three tools that answer dirty text - in an
+// answer, in a refusal, and in words of the result's own - and a client
+// connected to it.
+func dirtyTools(t *testing.T, cfg Config) (*Registry, *mcp.ClientSession) {
+	t.Helper()
+
+	r := New(cfg)
+	Add(r, Read, &mcp.Tool{Name: "thing_read", Description: "reads a thing"}, func(context.Context, *mcp.CallToolRequest, none) (*mcp.CallToolResult, dirtyOut, error) {
+		return nil, dirtyOut{
+			dirtyPaging: dirtyPaging{Next: dirty},
+			Title:       dirty, Long: dirty + " and on and on", Path: dirty, Kind: dirty, Count: 3,
+			Tags: []string{dirty, "plain"}, Rows: []dirtyRow{{Title: dirty, Path: dirty}}, First: &dirtyRow{Title: dirty, Path: dirty},
+			ByTitle: map[string]int{dirty: 1, "plain": 2},
+			Extra:   map[string]any{"title": dirty, "path": dirty, "deep": []any{dirty, 4.0}},
+			Folders: []string{dirty}, Internal: dirty,
+		}, nil
+	})
+	Add(r, Read, &mcp.Tool{Name: "thing_refuse", Description: "refuses"}, func(context.Context, *mcp.CallToolRequest, none) (*mcp.CallToolResult, none, error) {
+		return nil, none{}, errors.New("there is no " + dirty + " and on and on")
+	})
+	Add(r, Read, &mcp.Tool{Name: "thing_say", Description: "answers in words"}, func(context.Context, *mcp.CallToolRequest, none) (*mcp.CallToolResult, none, error) {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "found " + dirty}}}, none{}, nil
+	})
+
+	return r, connect(t, r, Selection{})
+}
+
+// read is what thing_read answered, decoded.
+func read(t *testing.T, cs *mcp.ClientSession) dirtyOut {
+	t.Helper()
+
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "thing_read", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("thing_read: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("thing_read refused: %q", said(res))
+	}
+	raw, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out dirtyOut
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("the answer %s: %v", raw, err)
+	}
+
+	return out
+}
+
+// With CleanAnswers set, every piece of text in an answer is cleaned and cut
+// to the length, however deep it is and whatever holds it; what is answered
+// under a name in LeaveAsIs is as the tool answered it, and so is all under
+// it; and a refusal's words and a result's own are cleaned as an answer is.
+func TestAnswersAreCleaned(t *testing.T) {
+	t.Parallel()
+
+	_, cs := dirtyTools(t, Config{CleanAnswers: 14, LeaveAsIs: []string{"path", "folders"}})
+	out := read(t, cs)
+
+	for what, got := range map[string]string{
+		"a field": out.Title, "a field of an embedded struct": out.Next, "a named kind of text": string(out.Kind), "one of a list": out.Tags[0],
+		"a field of a row": out.Rows[0].Title, "a field behind a pointer": out.First.Title,
+	} {
+		if got != cleaned {
+			t.Errorf("%s = %q, want it cleaned", what, got)
+		}
+	}
+	if out.Long != "Zzyzx Road an\u2026" || out.Tags[1] != "plain" || out.Count != 3 {
+		t.Errorf("text past the length = %q, plain text %q, a number %d", out.Long, out.Tags[1], out.Count)
+	}
+	if _, kept := out.ByTitle[dirty]; kept || out.ByTitle[cleaned] != 1 || out.ByTitle["plain"] != 2 {
+		t.Errorf("a map keyed by text = %v, want its key cleaned and its values kept", out.ByTitle)
+	}
+	extra, isObject := out.Extra.(map[string]any)
+	deep, isList := extra["deep"].([]any)
+	if !isObject || !isList || extra["title"] != cleaned || len(deep) != 2 || deep[0] != cleaned || deep[1] != 4.0 {
+		t.Errorf("what an untyped field holds = %v, want its text cleaned at every depth", out.Extra)
+	}
+
+	// what a later call hands back is as the tool answered it
+	if out.Path != dirty || out.Rows[0].Path != dirty || out.First.Path != dirty || extra["path"] != dirty || out.Folders[0] != dirty {
+		t.Errorf("what is to be left as it is: %q, %q, %q, %v, %q", out.Path, out.Rows[0].Path, out.First.Path, extra["path"], out.Folders)
+	}
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "thing_refuse", Arguments: map[string]any{}})
+	if err != nil || !res.IsError || said(res) != "there is no Z\u2026" {
+		t.Errorf("a refusal = %v %q, want its words cleaned and cut", err, said(res))
+	}
+	res, err = cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "thing_say", Arguments: map[string]any{}})
+	if err != nil || res.IsError || said(res) != "found Zzyzx R\u2026" {
+		t.Errorf("a result's own words = %v %q, want them cleaned and cut", err, said(res))
+	}
+}
+
+// Nothing is cleaned until a server says so: it has first to name what a
+// later call hands back.
+func TestAnswersAreAsTheyWereUntilAsked(t *testing.T) {
+	t.Parallel()
+
+	_, cs := dirtyTools(t, Config{LeaveAsIs: []string{"path"}})
+	if out := read(t, cs); out.Title != dirty || out.Long != dirty+" and on and on" || out.Tags[0] != dirty {
+		t.Errorf("with CleanAnswers not set the answer = %+v", out)
+	}
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "thing_refuse", Arguments: map[string]any{}})
+	if err != nil || said(res) != "there is no "+dirty+" and on and on" {
+		t.Errorf("with CleanAnswers not set a refusal = %v %q", err, said(res))
+	}
+}
+
+// A name on the list of what to leave as it is that no tool answers a field
+// under leaves nothing and says nothing, so a server's test can ask which
+// those are.
+func TestLeaveAsIsUnused(t *testing.T) {
+	t.Parallel()
+
+	r, _ := dirtyTools(t, Config{CleanAnswers: 100, LeaveAsIs: []string{"path", "gone", "folders", "next", "Internal", "also_gone"}})
+	if got := r.LeaveAsIsUnused(); !slices.Equal(got, []string{"gone", "Internal", "also_gone"}) {
+		t.Errorf("unused = %v, want the names no tool answers under, a field kept out of the JSON among them", got)
+	}
+	if r, _ := dirtyTools(t, Config{LeaveAsIs: []string{"path", "title"}}); len(r.LeaveAsIsUnused()) != 0 {
+		t.Errorf("a list every name of which is answered = %v", r.LeaveAsIsUnused())
+	}
+}
+
+// A tool that saves a thing with settings of someone else's naming, as an
+// indexer or a container is saved.
+type thingSaveIn struct {
+	Name     string              `json:"name"`
+	Settings map[string]any      `json:"settings,omitempty"`
+	Set      map[string]any      `json:"set,omitempty"`
+	Env      []map[string]string `json:"env,omitempty"`
+	Auth     thingAuth           `json:"auth"`
+	Webhook  string              `json:"webhook,omitempty"`
+	Command  []string            `json:"command,omitempty"`
+	Feed     string              `json:"feed,omitempty"`
+	Note     string              `json:"note,omitempty"`
+	IDs      []int               `json:"ids,omitempty"`
+	Big      int64               `json:"big,omitempty"`
+}
+
+type thingAuth struct {
+	User     string `json:"user"`
+	Cookie   string `json:"cookie,omitempty"`
+	Password string `json:"password,omitempty"`
+}
+
+// saving is a registry with a tool that saves a thing, one that takes
+// whatever it is sent and one that takes nothing, each failing with what
+// fails says, and the lines written for the calls of them.
+func saving(t *testing.T, cfg Config, fails func(thingSaveIn) error) (cs *mcp.ClientSession, written func() []string) {
+	t.Helper()
+
+	var mu sync.Mutex
+	var lines []string
+	cfg.LogWrite = func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		lines = append(lines, fmt.Sprintf(format, args...))
+	}
+	r := New(cfg)
+	Add(r, Write, &mcp.Tool{Name: "thing_save", Description: "saves a thing"}, func(_ context.Context, _ *mcp.CallToolRequest, in thingSaveIn) (*mcp.CallToolResult, none, error) {
+		if fails == nil {
+			return nil, none{}, nil
+		}
+
+		return nil, none{}, fails(in)
+	})
+	Add(r, Write, &mcp.Tool{Name: "thing_patch", Description: "changes whatever it is sent"}, func(context.Context, *mcp.CallToolRequest, map[string]any) (*mcp.CallToolResult, none, error) {
+		return nil, none{}, nil
+	})
+	Add(r, Write, &mcp.Tool{Name: "thing_sweep", Description: "sweeps, and takes nothing"}, func(context.Context, *mcp.CallToolRequest, any) (*mcp.CallToolResult, none, error) {
+		return nil, none{}, nil
+	})
+
+	return connect(t, r, Selection{}), func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return slices.Clone(lines)
+	}
+}
+
+// checkWritten checks the lines a suite's calls were written down as, and
+// that none of secrets is anywhere in them.
+func checkWritten(t *testing.T, got, want, secrets []string) {
+	t.Helper()
+
+	if !slices.Equal(got, want) {
+		t.Errorf("written down:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	for _, secret := range secrets {
+		if strings.Contains(strings.Join(got, "\n"), secret) {
+			t.Errorf("%q was written down", secret)
+		}
+	}
+}
+
+// What a write sent is written down with every credential blanked and every
+// name kept: an argument named as a credential is, one the server names
+// whatever it holds, and everything under a free-form object, whose names
+// are someone else's and say nothing of what they hold. The rest is written
+// as it was sent, a number too large for a float among it.
+func TestAWriteIsWrittenDownWithoutItsSecrets(t *testing.T) {
+	t.Parallel()
+
+	cs, written := saving(t, Config{SecretArguments: []string{"Webhook", "command"}}, nil)
+	call := func(name string, arguments map[string]any) {
+		t.Helper()
+
+		if _, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: name, Arguments: arguments}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	call("thing_save", map[string]any{
+		"name":     "one",
+		"settings": map[string]any{"cookie": "c00kie", "passkey": "pa55key", "port": 9117, "nested": map[string]any{"x": "d33p"}, "none": nil},
+		"set":      map[string]any{"interval": "sixty"},
+		"env":      []any{map[string]any{"DB_PASS": "hunter2"}},
+		"auth":     map[string]any{"user": "kt", "cookie": "c2kie", "password": "p2ssword"},
+		"webhook":  "https://hooks.test/T0KEN",
+		"command":  []any{"serve", "--password=fl4g"},
+		"ids":      []any{1, 2, 3},
+		"big":      json.Number("9007199254740993"),
+	})
+	call("thing_patch", map[string]any{"title": "s3cret", "list": []any{"l1sted"}})
+
+	checkWritten(t, written(), []string{
+		`write thing_save answered {"auth":{"cookie":"REDACTED","password":"REDACTED","user":"kt"},"big":9007199254740993,"command":["REDACTED","REDACTED"],"env":[{"DB_PASS":"REDACTED"}],"ids":[1,2,3],"name":"one","set":{"interval":"REDACTED"},"settings":{"cookie":"REDACTED","nested":{"x":"REDACTED"},"none":null,"passkey":"REDACTED","port":"REDACTED"},"webhook":"REDACTED"}`,
+		`write thing_patch answered {"list":["REDACTED"],"title":"REDACTED"}`,
+	}, []string{"c00kie", "pa55key", "9117", "d33p", "sixty", "hunter2", "c2kie", "p2ssword", "T0KEN", "fl4g", "s3cret", "l1sted"})
+}
+
+// A free-form argument a server says holds no credential is written as it
+// was sent, for the one tool it says it of, and a name under it that reads
+// as a credential's is blanked all the same.
+func TestAFreeFormArgumentTheServerShows(t *testing.T) {
+	t.Parallel()
+
+	cs, written := saving(t, Config{ShownArguments: map[string][]string{"thing_save": {"set"}, "thing_patch": {"set"}}}, nil)
+	for _, name := range []string{"thing_save", "thing_patch"} {
+		if _, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: name, Arguments: map[string]any{
+			"name":     "one",
+			"set":      map[string]any{"interval": 60, "mode": "quiet", "smtp_password": "p2ssword", "proxy": "http://kt:pr0xy@proxy.test:3128"}, //nolint:gosec // a made-up password, to see that it is not written down
+			"settings": map[string]any{"mode": "l0ud"},
+			"auth":     map[string]any{"user": "kt"},
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	checkWritten(t, written(), []string{
+		`write thing_save answered {"auth":{"user":"kt"},"name":"one","set":{"interval":60,"mode":"quiet","proxy":"http://REDACTED@proxy.test:3128","smtp_password":"REDACTED"},"settings":{"mode":"REDACTED"}}`,
+		`write thing_patch answered {"auth":{"user":"REDACTED"},"name":"REDACTED","set":{"interval":"REDACTED","mode":"REDACTED","proxy":"REDACTED","smtp_password":"REDACTED"},"settings":{"mode":"REDACTED"}}`,
+	}, []string{"p2ssword", "pr0xy", "l0ud"})
+}
+
+// An address is written with what it may carry a credential in blanked,
+// whatever the argument is called and wherever in a piece of text it is:
+// who it signs in as, each parameter's value and what follows its "#". Its
+// host, its path and its parameters' names stay.
+func TestAnAddressIsWrittenDownWithoutItsSecrets(t *testing.T) {
+	t.Parallel()
+
+	cs, written := saving(t, Config{}, nil)
+	for _, arguments := range []map[string]any{
+		{"feed": "https://feeds.test/rss/someshow?auth=PRIVATE-T0KEN&format=rss&flag&"},
+		{"feed": "https://gh0-t0ken@git.test/org/repo.git"},
+		{"feed": "postgres://kt:dbp4ss@db.test:5432/things?sslmode=require#fr4gment"},                                                        //nolint:gosec // a made-up password, to see that it is not written down
+		{"note": "fetch https://kt:n0te@files.test/a?key=n0tekey <https://plain.test/b> then say so", "name": "plain text, a/b and c:d?e=f"}, //nolint:gosec // a made-up password, to see that it is not written down
+	} {
+		arguments["auth"] = map[string]any{"user": "kt"}
+		if arguments["name"] == nil {
+			arguments["name"] = "one"
+		}
+
+		if _, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "thing_save", Arguments: arguments}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	checkWritten(t, written(), []string{
+		`write thing_save answered {"auth":{"user":"kt"},"feed":"https://feeds.test/rss/someshow?auth=REDACTED&format=REDACTED&REDACTED&","name":"one"}`,
+		`write thing_save answered {"auth":{"user":"kt"},"feed":"https://REDACTED@git.test/org/repo.git","name":"one"}`,
+		`write thing_save answered {"auth":{"user":"kt"},"feed":"postgres://REDACTED@db.test:5432/things?sslmode=REDACTED#REDACTED","name":"one"}`,
+		`write thing_save answered {"auth":{"user":"kt"},"name":"plain text, a/b and c:d?e=f","note":"fetch https://REDACTED@files.test/a?key=REDACTED <https://plain.test/b> then say so"}`,
+	}, []string{"PRIVATE-T0KEN", "gh0-t0ken", "dbp4ss", "fr4gment", "n0te"})
+}
+
+// A failure is apt to repeat what the call sent, the address it could not
+// reach or the value it would not take, so what was blanked in the
+// arguments is blanked in the failure beside them, and an address in it is
+// written as one in the arguments is. What was blanked is blanked where it
+// stands by itself and is long enough to be more than a word of the
+// failure's own: "require" is, "required" and "kt" are not.
+func TestAFailureIsWrittenDownWithoutTheCallsSecrets(t *testing.T) {
+	t.Parallel()
+
+	cs, written := saving(t, Config{}, func(in thingSaveIn) error {
+		return fmt.Errorf("Get %q: no such host; the cookie %v was not taken, nor %s, by https://api.test/v1?apikey=s3cond-key as %s, and a mode is required, not to require", in.Feed, in.Settings["cookie"], in.Auth.Password, in.Settings["as"])
+	})
+	if _, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "thing_save", Arguments: map[string]any{
+		"name":     "one",
+		"feed":     "https://feeds.test/rss?auth=PRIVATE-T0KEN&mode=require",
+		"settings": map[string]any{"cookie": "c00kie-c00kie", "as": "kt"},
+		"auth":     map[string]any{"user": "kt", "password": "p2ssword"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	checkWritten(t, written(), []string{
+		`write thing_save failed {"auth":{"password":"REDACTED","user":"kt"},"feed":"https://feeds.test/rss?auth=REDACTED&mode=REDACTED","name":"one","settings":{"as":"REDACTED","cookie":"REDACTED"}}: Get "https://feeds.test/rss?auth=REDACTED&mode=REDACTED": no such host; the cookie REDACTED was not taken, nor REDACTED, by https://api.test/v1?apikey=REDACTED as kt, and a mode is required, not to REDACTED`,
+	}, []string{"PRIVATE-T0KEN", "c00kie", "p2ssword", "s3cond-key"})
+}
+
+// A tool whose input is any takes no arguments, and refuses one as every
+// other tool does, naming what it takes: nothing. The call is written down
+// with what it sent blanked, there being no names of the tool's to go by.
+func TestAToolThatTakesNothingRefusesAnArgument(t *testing.T) {
+	t.Parallel()
+
+	cs, written := saving(t, Config{}, nil)
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "thing_sweep", Arguments: map[string]any{"force": "y3s"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.HasSuffix(said(res), "thing_sweep takes no arguments") {
+		t.Errorf("an argument sent to a tool that takes none was answered %q, want it refused and told so", said(res))
+	}
+
+	if res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "thing_sweep"}); err != nil || res.IsError {
+		t.Errorf("a call with no arguments was answered %v, %v", res, err)
+	}
+	if res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "thing_sweep", Arguments: map[string]any{}}); err != nil || res.IsError {
+		t.Errorf("a call with empty arguments was answered %v, %v", res, err)
+	}
+
+	got := written()
+	if len(got) != 3 || !strings.HasPrefix(got[0], `write thing_sweep refused {"force":"REDACTED"}: `) || got[1] != "write thing_sweep answered {}" || got[2] != "write thing_sweep answered {}" {
+		t.Errorf("written down: %q", got)
+	}
+}
+
+// Arguments that cannot be read cannot have what is in them blanked, so
+// they are not written at all.
+func TestArgumentsThatDoNotReadAreNotWritten(t *testing.T) {
+	t.Parallel()
+
+	h := hider{}
+	if got := h.arguments(json.RawMessage(`{"password": "hunter2`)); got != notShown {
+		t.Errorf("arguments cut short were written as %q", got)
+	}
+}
+
+// What a tool that fails, and one that answers, say of an address.
+type quoteIn struct {
+	How string `json:"how"`
+}
+
+type quoteOut struct {
+	Link string `json:"link"`
+}
+
+// A failure's words are what the caller reads, and a server is apt to quote
+// an address back in them with a credential of its own on the end. Whoever
+// worded the failure, the tool's error or a result the tool wrote itself,
+// and whatever the tool's kind, each address in it reaches the caller
+// without who it signs in as, the value of any parameter or what follows
+// its "#", and the rest of the words as they were, but for a comma against
+// the end of it, which cannot be told from the end of the secret. An
+// answer's addresses are the caller's to use and are left as they are.
+func TestAFailureIsReadWithoutAnAddressesSecrets(t *testing.T) {
+	t.Parallel()
+
+	const quoted = "https://kt:s1gnin@site.test/api?t=caps&apikey=st0red-key#fr4gment" //nolint:gosec // a made-up password, to see that it is not handed on
+	const shown = "https://REDACTED@site.test/api?t=REDACTED&apikey=REDACTED#REDACTED"
+	own := &mcp.TextContent{Text: "the server said so of " + quoted}
+
+	r := New(Config{LogWrite: func(string, ...any) {}})
+	Add(r, Read, &mcp.Tool{Name: "thing_quote", Description: "quotes an address"}, func(_ context.Context, _ *mcp.CallToolRequest, in quoteIn) (*mcp.CallToolResult, quoteOut, error) {
+		switch in.How {
+		case "error":
+			return nil, quoteOut{}, fmt.Errorf("Uri didn't match expected pattern: %s, try again (1/2)", quoted)
+		case "result":
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{own, &mcp.TextContent{Text: "and nothing more"}}}, quoteOut{}, nil
+		default:
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "it is at " + quoted}}}, quoteOut{Link: quoted}, nil
+		}
+	})
+	Add(r, Write, &mcp.Tool{Name: "thing_break", Description: "fails"}, func(context.Context, *mcp.CallToolRequest, none) (*mcp.CallToolResult, none, error) {
+		return nil, none{}, fmt.Errorf("Get %q: no such host", quoted)
+	})
+	cs := connect(t, r, Selection{})
+
+	for _, test := range []struct{ tool, how, want string }{
+		{"thing_quote", "error", "Uri didn't match expected pattern: " + shown + " try again (1/2)"},
+		{"thing_quote", "result", "the server said so of " + shown + "and nothing more"},
+		{"thing_break", "", `Get "` + shown + `": no such host`},
+	} {
+		arguments := map[string]any{}
+		if test.how != "" {
+			arguments["how"] = test.how
+		}
+
+		res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: test.tool, Arguments: arguments})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res.IsError || said(res) != test.want {
+			t.Errorf("%s %s failed with %q, want %q", test.tool, test.how, said(res), test.want)
+		}
+	}
+	if own.Text != "the server said so of "+quoted {
+		t.Errorf("the tool's own words were written over: %q", own.Text)
+	}
+
+	res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "thing_quote", Arguments: map[string]any{"how": "answer"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out quoteOut
+	if err := json.Unmarshal(mustJSON(t, res.StructuredContent), &out); err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError || said(res) != "it is at "+quoted || out.Link != quoted {
+		t.Errorf("an answer's address was changed: %q, %q", said(res), out.Link)
+	}
+}
+
+// mustJSON is a value as JSON.
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return raw
+}
+
+// What a tool that tests a thing answers: what the server said went wrong,
+// in the shapes a server's words come in, beside what a caller is to use.
+type probeRow struct {
+	Name     string            `json:"name"`
+	Failures []string          `json:"failures"`
+	Message  *string           `json:"message"`
+	Details  map[string]string `json:"details"`
+	Link     string            `json:"link"`
+	Extra    map[string]any    `json:"extra"`
+}
+
+type probeOut struct {
+	Rows []probeRow `json:"rows"`
+	GUID string     `json:"guid"`
+}
+
+// A server's own words for what went wrong quote an address with a
+// credential of the server's on it, and a tool answers with them. Under the
+// names the server gives for such words, each address is answered without
+// what it may carry one in, however deep the text is and whether the name
+// is a field's or a map's key. Every other address in the answer is the
+// caller's to use and is as it was, and so is one under a name that is
+// handed back. It is done whether or not answers are cleaned, and after
+// the cleaning when they are, so that a character that does not show
+// cannot keep an address from being read as one.
+func TestAServersOwnWordsAreAnsweredWithoutAnAddressesSecrets(t *testing.T) {
+	t.Parallel()
+
+	const quoted = "http://host.test/api?t=movie&apikey=st0red-key"
+	const shown = "http://host.test/api?t=REDACTED&apikey=REDACTED"
+	const split = "http:\u200b//host.test/api?t=movie&apikey=st0red-key"
+
+	for name, test := range map[string]struct {
+		clean      int
+		wantHidden string
+	}{
+		"as they were": {0, "said [" + split + "]"},
+		"cleaned":      {2000, "said [" + shown + "]"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			r := New(Config{CleanAnswers: test.clean, BlankAddresses: []string{"failures", "message", "details", "settings"}, LeaveAsIs: []string{"guid"}})
+			Add(r, Read, &mcp.Tool{Name: "thing_probe", Description: "tests a thing"}, func(context.Context, *mcp.CallToolRequest, none) (*mcp.CallToolResult, probeOut, error) {
+				return nil, probeOut{GUID: quoted, Rows: []probeRow{{
+					Name:     "said " + quoted,
+					Failures: []string{"HTTP request failed: [GET] at [" + quoted + "]", "said [" + split + "]"},
+					Message:  new("unavailable at [" + quoted + "]"),
+					Details:  map[string]string{"reason": "no answer from " + quoted},
+					Link:     quoted,
+					Extra:    map[string]any{"home": quoted, "settings": map[string]any{"baseUrl": quoted, "guid": quoted, "port": 9117, "tags": []any{quoted}}},
+				}}}, nil
+			})
+			cs := connect(t, r, Selection{})
+
+			res, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "thing_probe"})
+			if err != nil || res.IsError {
+				t.Fatalf("thing_probe: %v %+v", err, res)
+			}
+			var out probeOut
+			if err := json.Unmarshal(mustJSON(t, res.StructuredContent), &out); err != nil {
+				t.Fatal(err)
+			}
+			row := out.Rows[0]
+			settings, isMap := row.Extra["settings"].(map[string]any)
+			if !isMap {
+				t.Fatalf("the settings were answered as %v", row.Extra["settings"])
+			}
+
+			for what, got := range map[string][2]any{
+				"a failure":                     {row.Failures[0], "HTTP request failed: [GET] at [" + shown + "]"},
+				"a failure with a hidden mark":  {row.Failures[1], test.wantHidden},
+				"a message behind a pointer":    {*row.Message, "unavailable at [" + shown + "]"},
+				"a detail in a map":             {row.Details["reason"], "no answer from " + shown},
+				"a setting under a named key":   {settings["baseUrl"], shown},
+				"a list under a named key":      {fmt.Sprint(settings["tags"]), "[" + shown + "]"},
+				"a number under a named key":    {fmt.Sprint(settings["port"]), "9117"},
+				"a handle under a named key":    {settings["guid"], quoted},
+				"a handle":                      {out.GUID, quoted},
+				"a link":                        {row.Link, quoted},
+				"a name":                        {row.Name, "said " + quoted},
+				"a value under a key not named": {row.Extra["home"], quoted},
+			} {
+				if got[0] != got[1] {
+					t.Errorf("%s was answered %q, want %q", what, got[0], got[1])
+				}
+			}
+		})
+	}
+}
+
+// A name on the list that no tool answers a field under blanks nothing, and
+// is told of. A name that is only ever a map's key is told of as well.
+func TestBlankAddressesUnused(t *testing.T) {
+	t.Parallel()
+
+	r := New(Config{BlankAddresses: []string{"failures", "gone", "settings", "message"}})
+	Add(r, Read, &mcp.Tool{Name: "thing_probe", Description: "tests a thing"}, func(context.Context, *mcp.CallToolRequest, none) (*mcp.CallToolResult, probeOut, error) {
+		return nil, probeOut{}, nil
+	})
+
+	if got, want := r.BlankAddressesUnused(), []string{"gone", "settings"}; !slices.Equal(got, want) {
+		t.Errorf("BlankAddressesUnused() = %q, want %q", got, want)
+	}
+	if got := New(Config{}).BlankAddressesUnused(); len(got) != 0 {
+		t.Errorf("BlankAddressesUnused() with none given = %q", got)
 	}
 }
