@@ -1,6 +1,7 @@
 ## Unreleased
 
 - mcp/registry (breaking): `Hints.OpenWorld` is `Hints.SendsOut`, and it is for a tool that itself sends something to a person or a service beyond the server, an email or a notification; a tool that makes the server fetch from its own providers or hand work to its own download client is not one
+- mcp/acctest: `DecimalOr0` reads a fraction that may be absent, 0 when it is, beside `NumOr0`, which reads 1.5 as 1
 - test/replayproxy: `Serve` takes a host and a path ("clock.example.org/v1/time") to answer that one path from the test while the host's other paths replay: a recorded time of day is wrong from the next day on
 - test/env: `ListenProxy` brings the proxy up without asking the container anything, for a server that calls out as it starts and so is started only once the proxy listens; `StartProxy` is `ListenProxy` and then the check
 - test/env (breaking): `CheckReachable(ctx, what, port)` replaces `CheckProxyReachable(ctx, port)` and names what could not be reached, so a suite can check the port of each service it runs as well as the proxy's

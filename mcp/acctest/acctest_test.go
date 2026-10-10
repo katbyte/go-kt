@@ -234,6 +234,9 @@ func TestReaders(t *testing.T) {
 	if Str(answer["n"]) != "" || NumOr0(answer["names"]) != 0 || BoolOf(answer["n"]) {
 		t.Error("a field of another kind was read as if it were there")
 	}
+	if DecimalOr0(answer["ratio"]) != 1.5 || DecimalOr0(answer["gone"]) != 0 || DecimalOr0(answer["names"]) != 0 {
+		t.Error("a fraction that may be absent was read wrong")
+	}
 	if got := Texts(answer["mixed"]); !slices.Equal(got, []string{"x", ""}) {
 		t.Errorf("texts = %v", got)
 	}
