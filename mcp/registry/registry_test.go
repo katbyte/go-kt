@@ -942,7 +942,7 @@ func TestAFreeFormArgumentTheServerShows(t *testing.T) {
 	for _, name := range []string{"thing_save", "thing_patch"} {
 		if _, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: name, Arguments: map[string]any{
 			"name":     "one",
-			"set":      map[string]any{"interval": 60, "mode": "quiet", "smtp_password": "p2ssword", "proxy": "http://kt:pr0xy@proxy.test:3128"}, //nolint:gosec // a made-up password, to see that it is not written down
+			"set":      map[string]any{"interval": 60, "mode": "quiet", "smtp_password": "p2ssword", "passwordConfirmation": "p2ssword", "proxy": "http://kt:pr0xy@proxy.test:3128"}, //nolint:gosec // a made-up password, to see that it is not written down
 			"settings": map[string]any{"mode": "l0ud"},
 			"auth":     map[string]any{"user": "kt"},
 		}}); err != nil {
@@ -951,8 +951,8 @@ func TestAFreeFormArgumentTheServerShows(t *testing.T) {
 	}
 
 	checkWritten(t, written(), []string{
-		`write thing_save answered {"auth":{"user":"kt"},"name":"one","set":{"interval":60,"mode":"quiet","proxy":"http://REDACTED@proxy.test:3128","smtp_password":"REDACTED"},"settings":{"mode":"REDACTED"}}`,
-		`write thing_patch answered {"auth":{"user":"REDACTED"},"name":"REDACTED","set":{"interval":"REDACTED","mode":"REDACTED","proxy":"REDACTED","smtp_password":"REDACTED"},"settings":{"mode":"REDACTED"}}`,
+		`write thing_save answered {"auth":{"user":"kt"},"name":"one","set":{"interval":60,"mode":"quiet","passwordConfirmation":"REDACTED","proxy":"http://REDACTED@proxy.test:3128","smtp_password":"REDACTED"},"settings":{"mode":"REDACTED"}}`,
+		`write thing_patch answered {"auth":{"user":"REDACTED"},"name":"REDACTED","set":{"interval":"REDACTED","mode":"REDACTED","passwordConfirmation":"REDACTED","proxy":"REDACTED","smtp_password":"REDACTED"},"settings":{"mode":"REDACTED"}}`,
 	}, []string{"p2ssword", "pr0xy", "l0ud"})
 }
 

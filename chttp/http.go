@@ -48,7 +48,7 @@ type Options struct {
 	// SecretHeaders are headers a trace must not show, beside Authorization, Proxy-Authorization, Cookie and Set-Cookie.
 	SecretHeaders []string
 	// SecretNames are names a trace must not show the value of wherever they appear, compared without case, beside those hidden unasked (SecretName):
-	// an API's "pass" or "pin" needs naming, proxyPassword does not.
+	// an API's "pass" or "pin" needs naming, proxyPassword and passwordConfirmation do not.
 	SecretNames []string
 	// TraceBody is how much of a body a trace prints: 0 is DefaultTraceBody, negative prints none. No more is ever read for it.
 	TraceBody int

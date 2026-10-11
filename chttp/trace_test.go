@@ -426,19 +426,19 @@ func TestTextual(t *testing.T) {
 	}
 }
 
-// A credential is known by how its name ends, whatever an API puts in front
-// of it, so one nobody listed is still not in a trace; a name that only
-// looks like one is left alone.
-func TestTraceBlanksANameThatEndsAsACredentialDoes(t *testing.T) {
+// A credential is known by a word in its name or by how the name ends,
+// whatever an API puts around it, so one nobody listed is still not in a
+// trace; a name that only looks like one is left alone.
+func TestTraceBlanksANameThatReadsAsACredentials(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"proxyPassword":"s3cret-1","tsigKeys":[{"keyName":"k","sharedSecret":"s3cret-2"}],"partialToken":"s3cret-3","REFRESH_TOKEN":"s3cret-4","apiKey":"s3cret-5","TmdbApiKey":"s3cret-11","tokens":"shown-1","passwordHint":"shown-2","secretary":"shown-3","token_count":"shown-4","sortKey":"shown-5","password":null}`))
+		_, _ = w.Write([]byte(`{"proxyPassword":"s3cret-1","tsigKeys":[{"keyName":"k","sharedSecret":"s3cret-2"}],"partialToken":"s3cret-3","REFRESH_TOKEN":"s3cret-4","apiKey":"s3cret-5","TmdbApiKey":"s3cret-11","passwordConfirmation":"s3cret-13","clientSecretValue":"s3cret-14","tokens":"shown-1","token_count":"shown-2","sortKey":"shown-3","cookiePolicy":"shown-4","maxTokens":"shown-5","password":null}`))
 	}))
 	defer srv.Close()
 
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL+"/join?sessionToken=s3cret-6&page_token=s3cret-7&tokens=shown-6&flag&Api%5FKey=s3cret-8&x_api_key=s3cret-12", strings.NewReader("node=two&primaryNodePassword=s3cret-9&client_secret=s3cret-10&secrets=shown-7"))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL+"/join?sessionToken=s3cret-6&page_token=s3cret-7&tokens=shown-6&flag&Api%5FKey=s3cret-8&x_api_key=s3cret-12", strings.NewReader("node=two&primaryNodePassword=s3cret-9&client_secret=s3cret-10&passwords=s3cret-15&keyword=shown-7"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +453,7 @@ func TestTraceBlanksANameThatEndsAsACredentialDoes(t *testing.T) {
 			t.Errorf("the trace hides shown-%d, under a name that only looks like a credential's:\n%s", i, out)
 		}
 	}
-	for _, want := range []string{"/join?sessionToken=REDACTED&page_token=REDACTED&tokens=shown-6&flag&Api%5FKey=REDACTED&x_api_key=REDACTED ", `"TmdbApiKey": "REDACTED"`, "\nnode=two&primaryNodePassword=REDACTED&client_secret=REDACTED&secrets=shown-7\n", `"sharedSecret": "REDACTED"`, `"REFRESH_TOKEN": "REDACTED"`, `"apiKey": "REDACTED"`, `"password": null`} {
+	for _, want := range []string{"/join?sessionToken=REDACTED&page_token=REDACTED&tokens=shown-6&flag&Api%5FKey=REDACTED&x_api_key=REDACTED ", `"TmdbApiKey": "REDACTED"`, "\nnode=two&primaryNodePassword=REDACTED&client_secret=REDACTED&passwords=REDACTED&keyword=shown-7\n", `"passwordConfirmation": "REDACTED"`, `"clientSecretValue": "REDACTED"`, `"sharedSecret": "REDACTED"`, `"REFRESH_TOKEN": "REDACTED"`, `"apiKey": "REDACTED"`, `"password": null`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the trace is missing %q:\n%s", want, out)
 		}
@@ -462,8 +462,8 @@ func TestTraceBlanksANameThatEndsAsACredentialDoes(t *testing.T) {
 
 // What else writes down what it was sent - a tool's arguments, say - blanks
 // a credential by the rule a trace does: a string field of a name an API
-// passes one under, of a name that ends as a credential's does, or of a name
-// the caller adds, whether the JSON is whole or cut short. Nothing else is
+// passes one under, of a name that reads as a credential's, or of a name the
+// caller adds, whether the JSON is whole or cut short. Nothing else is
 // touched.
 func TestRedactJSON(t *testing.T) {
 	t.Parallel()
@@ -476,6 +476,7 @@ func TestRedactJSON(t *testing.T) {
 		{`{"name":"one","password":"hunter2","confirm":true}`, nil, `{"name":"one","password":"REDACTED","confirm":true}`},
 		{`{"apikey":"abc","api_key":"abc","token":"abc","access_token":"abc"}`, nil, `{"apikey":"REDACTED","api_key":"REDACTED","token":"REDACTED","access_token":"REDACTED"}`},
 		{`{"primaryNodePassword": "x", "sharedSecret" : "y", "TmdbApiKey":"z"}`, nil, `{"primaryNodePassword": "REDACTED", "sharedSecret" : "REDACTED", "TmdbApiKey":"REDACTED"}`},
+		{`{"passwordConfirmation":"hunter2","clientSecretValue":"y","maxTokens":"8"}`, nil, `{"passwordConfirmation":"REDACTED","clientSecretValue":"REDACTED","maxTokens":"8"}`},
 		{`{"pin":"1234","name":"one"}`, nil, `{"pin":"1234","name":"one"}`},
 		{`{"pin":"1234","name":"one"}`, []string{"PIN"}, `{"pin":"REDACTED","name":"one"}`},
 		{`{"password":"a \"quoted\" one","next":1}`, nil, `{"password":"REDACTED","next":1}`},
@@ -490,14 +491,17 @@ func TestRedactJSON(t *testing.T) {
 }
 
 // A name holds a credential when it is one an API passes a credential
-// under, one the caller adds, or one that ends as a credential's does,
-// whatever is in front and in whatever case.
+// under, one the caller adds, one with password, passphrase or secret
+// anywhere in it, or one that ends as a token's, a cookie's or a key's does,
+// in whatever case. The first costs a harmless name with the word in it,
+// hidden too; the second leaves a count of tokens alone.
 func TestSecretName(t *testing.T) {
 	t.Parallel()
 
 	for name, want := range map[string]bool{
 		"password": true, "Password": true, "primaryNodePassword": true, "sharedSecret": true, "refresh_token": true, "TmdbApiKey": true, "api_key": true, "apikey": true, "token": true, "ssh_passphrase": true, "ssh_private_key": true, "sshPrivateKey": true, "cookie": true, "sessionCookie": true, "passkey": true, "Passkey": true,
-		"name": false, "passwords": false, "tokens": false, "cookies": false, "key": false, "userKey": false, "tls_key": false, "sort_key": false, "pass": false, "": false,
+		"passwordConfirmation": true, "PasswordConfirmation": true, "clientSecretValue": true, "client_secret_id": true, "ssh_passphrase_file": true, "passwords": true, "secrets": true, "passwordHint": true,
+		"name": false, "maxTokens": false, "tokenCount": false, "cookiePolicy": false, "passkeys": false, "tokens": false, "cookies": false, "key": false, "userKey": false, "tls_key": false, "sort_key": false, "pass": false, "": false,
 	} {
 		if got := SecretName(name); got != want {
 			t.Errorf("SecretName(%q) = %v, want %v", name, got, want)
