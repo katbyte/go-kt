@@ -1,4 +1,4 @@
-## Unreleased
+## v0.6.3 (2026-10-10)
 
 - mcp/registry (fix): a free-form argument a server names in `Config.ShownArguments` is written as sent only for a call the tool answered. A call the tool failed, or one refused before it ran, was written the same way, though it was never held to the tool's own list of names: a setting the tool would not take, one that carries every signing key's secret, went into the line in clear. Such a call is now written with every value under the argument blanked, like any other
 - mcp/registry: `Config.LogWrite`'s doc says the line is not shown at a tool's default log level: it goes to the shared log at info, for whoever sets the log to info
