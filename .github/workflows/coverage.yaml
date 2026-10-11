@@ -31,6 +31,7 @@ jobs:
           # publish-coverage-badge.sh needs the remote refs to find or create
           # the orphan branch
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: ./.go-version
@@ -55,4 +56,6 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           PCT: ${{ steps.cov.outputs.pct }}
+          # checkout keeps no credentials, so the push is given the token here
+          GH_TOKEN: ${{ github.token }}
         run: bash ./scripts/publish-coverage-badge.sh

@@ -11,15 +11,17 @@ GOFUMPT=$(TOOLS_BIN)/gofumpt
 GOLANGCI_LINT=$(TOOLS_BIN)/golangci-lint
 
 # non-Go tools also live in .tools/bin at pinned versions, but the pins are here (dependabot
-# cannot bump them): shellcheck (used by actionlint on run: blocks) and typos are static binaries
-# downloaded from their github releases, yamllint is python installed into a repo-local venv. all
-# rebuild when this makefile changes.
+# cannot bump them): shellcheck (used by actionlint on run: blocks), typos and zizmor are static
+# binaries downloaded from their github releases, yamllint is python installed into a repo-local
+# venv. all rebuild when this makefile changes.
 SHELLCHECK_VERSION=v0.11.0
 TYPOS_VERSION=v1.50.1
 YAMLLINT_VERSION=1.38.0
+ZIZMOR_VERSION=v1.30.1
 SHELLCHECK=$(TOOLS_BIN)/shellcheck
 TYPOS=$(TOOLS_BIN)/typos
 YAMLLINT=$(TOOLS_BIN)/yamllint
+ZIZMOR=$(TOOLS_BIN)/zizmor
 
 # golangci-lint with the azproviderlint module plugin compiled in (.tools/.custom-gcl.yml);
 # lint runs use this binary, the plain go.mod one exists to bootstrap `golangci-lint custom`
@@ -57,6 +59,12 @@ $(YAMLLINT): makefile
 	@mkdir -p $(TOOLS_BIN)
 	@python3 -m venv .tools/venv && .tools/venv/bin/pip install -q yamllint==$(YAMLLINT_VERSION) && ln -sf ../venv/bin/yamllint $@
 
+$(ZIZMOR): makefile
+	@echo "==> downloading zizmor $(ZIZMOR_VERSION)..."
+	@mkdir -p $(TOOLS_BIN)
+	@case "$$(uname)" in Darwin) target=apple-darwin;; *) target=unknown-linux-gnu;; esac; arch=$$(uname -m); [ "$$arch" = "arm64" ] && arch=aarch64; \
+		curl -sSfL "https://github.com/zizmorcore/zizmor/releases/download/$(ZIZMOR_VERSION)/zizmor-$$arch-$$target.tar.gz" | tar -xz -O zizmor > $@ && chmod +x $@
+
 default: fmt build
 
 all: fmt build
@@ -69,7 +77,7 @@ build: ## Compile every package (this is a library; there is no binary to instal
 	@echo "==> building..."
 	go build ./...
 
-tools: $(ACTIONLINT) $(GOFUMPT) $(GOLANGCI_LINT) $(GOLANGCI_LINT_MODULES) $(SHELLCHECK) $(TYPOS) $(YAMLLINT) ## Install all pinned dev tools into .tools/bin
+tools: $(ACTIONLINT) $(GOFUMPT) $(GOLANGCI_LINT) $(GOLANGCI_LINT_MODULES) $(SHELLCHECK) $(TYPOS) $(YAMLLINT) $(ZIZMOR) ## Install all pinned dev tools into .tools/bin
 
 ##@ Formatting
 fmt: $(GOFUMPT) $(GOLANGCI_LINT) ## Fix Go formatting (gofmt, gofumpt, goimports)
@@ -92,6 +100,10 @@ lint: $(GOLANGCI_LINT_MODULES) ## Check source code with the golangci linters (i
 actionlint: $(ACTIONLINT) $(SHELLCHECK) ## Check GitHub workflows with actionlint (incl. shellcheck on run blocks)
 	@echo "==> Checking workflows with actionlint..."
 	@$(ACTIONLINT) -shellcheck=$(SHELLCHECK)
+
+zizmor: $(ZIZMOR) ## Audit GitHub workflows and dependabot config for security issues with zizmor
+	@echo "==> Auditing workflows with zizmor..."
+	@$(ZIZMOR) .
 
 lint-fix: $(GOLANGCI_LINT_MODULES) ## Fix source code with all golangci linters
 	@echo "==> Checking source code against linters (applying autofixes)..."
@@ -144,6 +156,6 @@ cover: build ## Run the tests with coverage and report the total
 cover-html: cover ## Run the tests with coverage and open the HTML report
 	@go tool cover -html=$(COVERDIR)/coverage.out
 
-check-all: build test lint actionlint yamllint shellcheck typos depscheck ## Run build + test + all linters + depscheck
+check-all: build test lint actionlint zizmor yamllint shellcheck typos depscheck ## Run build + test + all linters + depscheck
 
-.PHONY: default all help fmt goimports build lint lint-fix actionlint yamllint shellcheck typos typos-fix depscheck check-all tools test cover cover-html
+.PHONY: default all help fmt goimports build lint lint-fix actionlint zizmor yamllint shellcheck typos typos-fix depscheck check-all tools test cover cover-html

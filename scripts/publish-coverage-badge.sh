@@ -2,9 +2,9 @@
 #
 # Writes a shields.io endpoint JSON onto an orphan "badges" branch, so the
 # README badge needs no third-party coverage service and no token beyond the
-# workflow's own GITHUB_TOKEN.
+# workflow's own GITHUB_TOKEN, which the workflow passes in as GH_TOKEN.
 #
-# Usage: PCT=81.0 ./scripts/publish-coverage-badge.sh
+# Usage: PCT=81.0 GH_TOKEN=... ./scripts/publish-coverage-badge.sh
 set -euo pipefail
 
 PCT="${PCT:?set PCT to the coverage percentage, e.g. 81.0}"
@@ -53,5 +53,8 @@ fi
 git -C "$tmp/wt" -c user.name='github-actions[bot]' \
   -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
   commit --quiet -m "coverage: ${PCT}%"
-git -C "$tmp/wt" push --quiet origin "$BRANCH"
+# the workflow checks out without stored credentials, so the push asks gh for
+# them, and gh reads GH_TOKEN
+git -C "$tmp/wt" -c credential.helper= -c credential.helper='!gh auth git-credential' \
+  push --quiet origin "$BRANCH"
 echo "==> published coverage ${PCT}% to $BRANCH"

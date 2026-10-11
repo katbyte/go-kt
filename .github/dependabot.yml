@@ -5,6 +5,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # a release is left a week before it is taken, so one pulled for being bad never arrives
+    cooldown:
+      default-days: 7
     groups:
       # init and analyze must run the same version (analyze refuses a config written by another
       # release), so they have to move together in one PR
@@ -17,6 +20,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
 
   # dev tools (actionlint, golangci-lint, gofumpt) pinned in .tools/go.mod; tools move slowly,
   # so only check quarterly
@@ -24,3 +29,5 @@ updates:
     directory: "/.tools"
     schedule:
       interval: "quarterly"
+    cooldown:
+      default-days: 7
