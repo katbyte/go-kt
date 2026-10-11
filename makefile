@@ -15,7 +15,7 @@ GOLANGCI_LINT=$(TOOLS_BIN)/golangci-lint
 # binaries downloaded from their github releases, yamllint is python installed into a repo-local
 # venv. all rebuild when this makefile changes.
 SHELLCHECK_VERSION=v0.11.0
-TYPOS_VERSION=v1.50.1
+TYPOS_VERSION=v1.51.1
 YAMLLINT_VERSION=1.38.0
 ZIZMOR_VERSION=v1.30.1
 SHELLCHECK=$(TOOLS_BIN)/shellcheck
