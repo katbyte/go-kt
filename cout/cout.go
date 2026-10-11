@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	c "github.com/gookit/color"
+	"github.com/gookit/color"
 )
 
 // Verbosity is how much a tool prints, ordered so "Normal and above" is a comparison.
@@ -79,7 +79,7 @@ func (p printer) writer() io.Writer {
 
 // Sprintf formats and renders colour tags, for a coloured fragment to pass on or print elsewhere.
 func Sprintf(format string, args ...any) string {
-	return c.Sprintf(format, args...)
+	return color.Sprintf(format, args...)
 }
 
 // Printf prints normal output, nothing in quiet or silent modes.
@@ -93,7 +93,7 @@ func Println(args ...any) {
 	if p.level < VerbosityNormal {
 		return
 	}
-	c.Fprintln(p.out, args...)
+	color.Fprintln(p.out, args...)
 }
 
 // Verbosef prints detail only asked for with -v.
@@ -112,7 +112,7 @@ func QuietOnlyf(format string, args ...any) {
 	if p.level != VerbosityQuiet {
 		return
 	}
-	c.Fprintf(p.out, format, args...)
+	color.Fprintf(p.out, format, args...)
 }
 
 // Errorf prints an error to Err in every mode but silent.
@@ -121,7 +121,7 @@ func Errorf(format string, args ...any) {
 	if p.level == VerbositySilent {
 		return
 	}
-	c.Fprintf(p.err, format, args...)
+	color.Fprintf(p.err, format, args...)
 }
 
 // printf writes to out when the level is at least minimum.
@@ -129,5 +129,5 @@ func (p printer) printf(minimum Verbosity, format string, args ...any) {
 	if p.level < minimum {
 		return
 	}
-	c.Fprintf(p.out, format, args...)
+	color.Fprintf(p.out, format, args...)
 }

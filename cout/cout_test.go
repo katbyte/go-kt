@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
-	c "github.com/gookit/color"
+	"github.com/gookit/color"
 )
 
 // Colour rendering depends on the terminal; disabling it makes tags strip to
 // plain text so every expectation below is deterministic. Tag rendering itself
 // is covered by comparing against gookit's own output.
 func TestMain(m *testing.M) {
-	c.Disable()
+	color.Disable()
 	m.Run()
 }
 
@@ -106,7 +106,7 @@ func TestSprintfRendersTagsLikeGookit(t *testing.T) {
 	// either way our Sprintf must agree with gookit's, including tags that
 	// arrive through an argument rather than the format string
 	format, arg := "<green>ok</> %s", "<yellow>arg</>"
-	if got, want := Sprintf(format, arg), c.Sprintf(format, arg); got != want {
+	if got, want := Sprintf(format, arg), color.Sprintf(format, arg); got != want {
 		t.Errorf("Sprintf = %q, want %q", got, want)
 	}
 	if got := Sprintf(format, arg); got != "ok arg" {

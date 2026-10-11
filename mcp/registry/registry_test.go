@@ -1248,6 +1248,9 @@ func TestAServersOwnWordsAreAnsweredWithoutAnAddressesSecrets(t *testing.T) {
 			if !isMap {
 				t.Fatalf("the settings were answered as %v", row.Extra["settings"])
 			}
+			if row.Message == nil {
+				t.Fatal("the message behind a pointer was not answered")
+			}
 
 			for what, got := range map[string][2]any{
 				"a failure":                     {row.Failures[0], "HTTP request failed: [GET] at [" + shown + "]"},

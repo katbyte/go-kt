@@ -24,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/katbyte/go-kt/pointer"
 )
 
 // Status is a job's state, as SABnzbd names it in the queue and history.
@@ -212,10 +214,10 @@ func (s *Server) Jobs() []Job {
 
 	out := make([]Job, 0, len(s.jobs))
 	for _, j := range s.queue() {
-		out = append(out, *j)
+		out = append(out, pointer.From(j))
 	}
 	for _, j := range s.history() {
-		out = append(out, *j)
+		out = append(out, pointer.From(j))
 	}
 
 	return out

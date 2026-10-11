@@ -174,14 +174,11 @@ func (s *Server) configAnswer() configAnswer {
 		Misc: configMisc{
 			CompleteDir:            s.completeDir,
 			DownloadDir:            s.incompleteDir(),
-			PreCheck:               0,
-			HistoryRetention:       "",
 			HistoryRetentionOption: "all",
-			HistoryRetentionNumber: 0,
 		},
 		Categories: []configCategory{
-			{Name: "*", Order: 0, PP: "3", Script: noScript, Dir: "", Priority: PriorityNormal},
-			{Name: s.category, Order: 1, PP: "", Script: "Default", Dir: "", Priority: PriorityDefault},
+			{Name: "*", PP: "3", Script: noScript, Priority: PriorityNormal},
+			{Name: s.category, Order: 1, Script: "Default", Priority: PriorityDefault},
 		},
 		Servers: []configServer{},
 		Sorters: []configSorter{},
@@ -279,7 +276,6 @@ func (s *Server) queueListing(params url.Values) queueAnswer {
 			Script:     noScript,
 			Filename:   j.Name,
 			Labels:     []string{},
-			Password:   "",
 			Cat:        j.Category,
 			MBLeft:     megabytes(remaining),
 			MB:         megabytes(j.Size),
@@ -377,7 +373,6 @@ func (s *Server) historyListing(params url.Values) historyAnswer {
 
 	return historyAnswer{History: history{
 		NoOfSlots:         total,
-		PPSlots:           0,
 		DaySize:           humanSize(totalBytes),
 		WeekSize:          humanSize(totalBytes),
 		MonthSize:         humanSize(totalBytes),
@@ -395,7 +390,7 @@ func (s *Server) addFile(params url.Values, up upload) any {
 	size, err := nzbSize(up.data)
 	if err != nil {
 		// SABnzbd answers what is not an NZB with no job and status false, which Sonarr's CheckForError turns into a failed grab
-		return addAnswer{Status: false, NzoIDs: []string{}}
+		return addAnswer{NzoIDs: []string{}}
 	}
 	name := params.Get("nzbname")
 	if name == "" {

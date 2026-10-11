@@ -8,7 +8,7 @@ type statusAnswer struct {
 	Error  string `json:"error,omitempty"`
 }
 
-func failure(message string) statusAnswer { return statusAnswer{Status: false, Error: message} }
+func failure(message string) statusAnswer { return statusAnswer{Error: message} }
 
 type versionAnswer struct {
 	Version string `json:"version"`
