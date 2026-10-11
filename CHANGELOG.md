@@ -1,3 +1,8 @@
+## Unreleased
+
+- mcp/registry (fix): a free-form argument a server names in `Config.ShownArguments` is written as sent only for a call the tool answered. A call the tool failed, or one refused before it ran, was written the same way, though it was never held to the tool's own list of names: a setting the tool would not take, one that carries every signing key's secret, went into the line in clear. Such a call is now written with every value under the argument blanked, like any other
+- mcp/registry: `Config.LogWrite`'s doc says the line is not shown at a tool's default log level: it goes to the shared log at info, for whoever sets the log to info
+
 ## v0.6.2 (2026-10-10)
 
 - mcp/registry (fix): the line written for a write blanked only an argument named as a credential, so a key, a cookie or a passkey under a name of someone else's choosing, in a settings object, was written in clear to a log at info. Blanked now, with its names kept, is everything under an argument a tool takes as a free-form object; in an address anywhere in what is left, who it signs in as, the value of every parameter and what follows its `#`; and whatever `Config.SecretArguments` names, whole, for a file's text, a command or an address whose path is the secret. `Config.ShownArguments` names, by tool, a free-form argument that holds no credential and is written as sent. What was blanked is blanked in the failure beside it too, which is apt to repeat what it was sent. The arguments are written with their names in order, where they were written as the caller had them

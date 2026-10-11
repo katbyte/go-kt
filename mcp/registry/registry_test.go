@@ -956,6 +956,46 @@ func TestAFreeFormArgumentTheServerShows(t *testing.T) {
 	}, []string{"p2ssword", "pr0xy", "l0ud"})
 }
 
+// What a server says is safe to show is shown for a call the tool answered, and for no other. A tool checks the names under such an argument
+// against a list of its own, which holds only for what it accepted: a call it failed, or one turned away before it ran, is written with every
+// value under the argument blanked like any other, so a setting the tool would never take cannot put its secret in the line.
+func TestAShownArgumentIsShownOnlyWhenTheToolAnswered(t *testing.T) {
+	t.Parallel()
+
+	cs, written := saving(t, Config{ShownArguments: map[string][]string{"thing_save": {"set"}}}, func(in thingSaveIn) error {
+		if _, refused := in.Set["tsigKeys"]; refused {
+			return errors.New("tsigKeys is not a setting this tool changes")
+		}
+
+		return nil
+	})
+	for _, arguments := range []map[string]any{
+		{"name": "one", "set": map[string]any{"mode": "quiet"}},
+		{"name": "one", "set": map[string]any{"mode": "quiet", "tsigKeys": "key-one|s3cret-of-the-key|hmac-sha256"}},
+		{"name": "one", "set": map[string]any{"mode": "l0ud"}, "nope": 1},
+	} {
+		arguments["auth"] = map[string]any{"user": "kt"}
+		if _, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "thing_save", Arguments: arguments}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := written()
+	want := []string{
+		`write thing_save answered {"auth":{"user":"kt"},"name":"one","set":{"mode":"quiet"}}`,
+		`write thing_save failed {"auth":{"user":"kt"},"name":"one","set":{"mode":"REDACTED","tsigKeys":"REDACTED"}}: tsigKeys is not a setting this tool changes`,
+		`write thing_save refused {"auth":{"user":"kt"},"name":"one","nope":1,"set":{"mode":"REDACTED"}}: validating "arguments": `,
+	}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || !strings.HasPrefix(got[2], want[2]) {
+		t.Errorf("written down:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	for _, secret := range []string{"s3cret-of-the-key", "l0ud"} {
+		if strings.Contains(strings.Join(got, "\n"), secret) {
+			t.Errorf("%q was written down", secret)
+		}
+	}
+}
+
 // An address is written with what it may carry a credential in blanked,
 // whatever the argument is called and wherever in a piece of text it is:
 // who it signs in as, each parameter's value and what follows its "#". Its
