@@ -5,7 +5,7 @@ on:
   pull_request:
     types: ['opened', 'synchronize']
     paths:
-      - 'scripts/**.sh'
+      - '.scripts/**.sh'
       - 'makefile'
       - '.github/workflows/shellcheck.yaml'
 

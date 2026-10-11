@@ -115,7 +115,7 @@ yamllint: $(YAMLLINT) ## Check YAML files with yamllint (config in .yamllint.yml
 
 shellcheck: $(SHELLCHECK) ## Check shell scripts with shellcheck
 	@echo "==> Checking shell scripts with shellcheck..."
-	@$(SHELLCHECK) scripts/*.sh
+	@$(SHELLCHECK) .scripts/*.sh
 
 typos: $(TYPOS) ## Check all files for spelling mistakes with typos (config in .typos.toml)
 	@echo "==> Checking for typos..."

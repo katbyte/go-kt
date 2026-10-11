@@ -4,7 +4,7 @@
 # README badge needs no third-party coverage service and no token beyond the
 # workflow's own GITHUB_TOKEN, which the workflow passes in as GH_TOKEN.
 #
-# Usage: PCT=81.0 GH_TOKEN=... ./scripts/publish-coverage-badge.sh
+# Usage: PCT=81.0 GH_TOKEN=... ./.scripts/publish-coverage-badge.sh
 set -euo pipefail
 
 PCT="${PCT:?set PCT to the coverage percentage, e.g. 81.0}"
