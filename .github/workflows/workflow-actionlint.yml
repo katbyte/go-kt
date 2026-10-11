@@ -1,8 +1,12 @@
 name: workflow action lint
 
-# Lints .github/workflows/ with rhysd/actionlint (expression/context errors, shellcheck on run:
-# blocks, action input validation). actionlint is pinned in .tools/go.mod (built by make) so the
-# gomod dependabot config keeps it up to date; its config lives in .github/actionlint.yaml.
+# Lints .github/workflows/ with actionlint (expression/context errors, shellcheck on run: blocks,
+# action input validation). actionlint is pinned in .tools/go.mod (built by make) so the gomod
+# dependabot config keeps it up to date; its config lives in .github/actionlint.yaml.
+#
+# We build katbyte/actionlint, a fork of rhysd/actionlint, which has had no release since March
+# 2026: it carries two open upstream PRs, one of which lets actionlint and golangci-lint share a
+# YAML library that .tools/go.mod otherwise had to hold back.
 
 permissions:
   contents: read
