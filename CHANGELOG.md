@@ -2,6 +2,7 @@
 
 - mcp/registry (fix): a free-form argument a server names in `Config.ShownArguments` is written as sent only for a call the tool answered. A call the tool failed, or one refused before it ran, was written the same way, though it was never held to the tool's own list of names: a setting the tool would not take, one that carries every signing key's secret, went into the line in clear. Such a call is now written with every value under the argument blanked, like any other
 - mcp/registry: `Config.LogWrite`'s doc says the line is not shown at a tool's default log level: it goes to the shared log at info, for whoever sets the log to info
+- mcp/acctest: `Suite.Secret`'s doc says a secret must be a string that is nothing's name and too long to turn up by chance; a password that is also a token's name is found wherever the name is listed
 
 ## v0.6.2 (2026-10-10)
 
@@ -17,6 +18,7 @@
 - mcp/registry: `Config.CleanAnswers` has every piece of text in every tool's answer, and in its refusal, cleaned as text from outside is and cut to a length, once around every tool where a tool cleaning its own fields can miss one; `Config.LeaveAsIs` names the values a later call hands back, a path or a release's id, which are answered as they are; and `LeaveAsIsUnused` is the names on that list no tool answers under, for a server's test to hold to none
 - test/replayproxy: a proxy with no `CassetteDir` keeps no recordings and replays alone, for a suite that keeps its server from the internet and answers what it asks itself; one that records or verifies still needs somewhere to keep them
 - test/env: a miss says what to do about it in the suite's own words when it gave a `RecordHint`, in the report at the end of a run as well as in the log, and a suite with no recordings is told that a request had no answer, and to answer it or find what asked, where both were told it had no recording and to record one
+- every package: comments say what a thing is for first and why in a clause, and are reflowed to 150 columns. 27 of the 44 Go files this release touches changed in comments alone, with no change in what they do: all of `clog`, `cout`, `lock`, `parallel`, `pointer`, `spelling`, `version`, `whitespace`, `mcp/server` and the three under `test/services`
 
 ## v0.6.1 (2026-10-10)
 
