@@ -25,6 +25,7 @@ The small packages every katbyte command-line tool needs, kept in one place inst
 | [`mcp/server`](mcp/server) | an MCP server served over stdio, or over HTTP behind a bearer token with a health probe |
 | [`mcp/registry`](mcp/registry) | which tools an MCP session gets: read, write and delete kinds, toolsets, an allow list that adds tools by name and a deny list that takes them out; and what stands around every tool: a line written for each write with its credentials blanked, a failure's words without an address's secrets, and every piece of text in an answer cleaned once |
 | [`mcp/acctest`](mcp/acctest) | a test suite that drives an MCP server as a client does, and fails when a tool was never seen to work |
+| [`pmetrics`](pmetrics) | a tool's Prometheus metrics page: its own readings and none of the Go runtime's, the labels whoever runs it wants on every one, one reading that says which build wrote it, written as text or served over HTTP with a health probe |
 | [`test/replayproxy`](test/replayproxy) | what a server under test fetches from the internet, recorded once and replayed in CI |
 | [`test/env`](test/env) | a live suite's surroundings: its environment variables, its replay proxy, and files laid out where the server's container reads them |
 | [`test/services/arrserver`](test/services/arrserver) | the servers a Sonarr, Radarr or Prowlarr calls home to, for a live suite to answer itself: the update server, the clock and the notices, none of which can be recorded once and replayed |

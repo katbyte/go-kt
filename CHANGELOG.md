@@ -1,5 +1,6 @@
 ## Unreleased
 
+- pmetrics: add the package, a tool's Prometheus metrics page. It holds the tool's own readings and nothing of the Go runtime's, puts the labels whoever runs the tool asks for on every reading, and says which build wrote it. It is written as text or served over HTTP beside a health check. Only this package uses the Prometheus client, so a tool without a metrics page does not build it in
 - every package: asks for Go 1.27, where it asked for 1.26, as every project that uses the library already does
 
 ## v0.6.4 (2026-10-11)
