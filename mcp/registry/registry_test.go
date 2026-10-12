@@ -707,8 +707,8 @@ func dirtyTools(t *testing.T, cfg Config) (*Registry, *mcp.ClientSession) {
 	r := New(cfg)
 	Add(r, Read, &mcp.Tool{Name: "thing_read", Description: "reads a thing"}, func(context.Context, *mcp.CallToolRequest, none) (*mcp.CallToolResult, dirtyOut, error) {
 		return nil, dirtyOut{
-			dirtyPaging: dirtyPaging{Next: dirty},
-			Title:       dirty, Long: dirty + " and on and on", Path: dirty, Kind: dirty, Count: 3,
+			Next:  dirty,
+			Title: dirty, Long: dirty + " and on and on", Path: dirty, Kind: dirty, Count: 3,
 			Tags: []string{dirty, "plain"}, Rows: []dirtyRow{{Title: dirty, Path: dirty}}, First: &dirtyRow{Title: dirty, Path: dirty},
 			ByTitle: map[string]int{dirty: 1, "plain": 2},
 			Extra:   map[string]any{"title": dirty, "path": dirty, "deep": []any{dirty, 4.0}},

@@ -1,3 +1,7 @@
+## Unreleased
+
+- every package: asks for Go 1.27, where it asked for 1.26, as every project that uses the library already does
+
 ## v0.6.4 (2026-10-11)
 
 - chttp, mcp/registry (fix): a name with `password`, `passphrase` or `secret` anywhere in it is a credential's, where only a name ending in one was. `passwordConfirmation` was written to the write log in clear under an argument a server said was safe to show, and was shown in a trace; so was any name with something after the word. `SecretName`, `RedactJSON`, a trace and the line written for a write all go by the one rule. The price is a harmless name with the word in it, `passwordHint`, hidden too. A token, a cookie or a key is still known only by how its name ends, so `maxTokens` is left alone
