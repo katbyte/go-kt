@@ -8,29 +8,39 @@
 ![lint](https://github.com/katbyte/go-kt/actions/workflows/pr-golangci-lint.yaml/badge.svg)
 [![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/katbyte/go-kt/badges/coverage.json)](https://github.com/katbyte/go-kt/actions/workflows/coverage.yaml)
 
-The small packages every katbyte command-line tool needs, kept in one place instead of copy-pasted into each repo.
+The small packages every katbyte tool needs, kept in one place instead of copied into each repo.
 
 | package | what it is for |
 |---|---|
-| [`clog`](clog) | the shared logrus logger: stderr, timestamps, level from the tool's own env var |
-| [`cout`](cout) | verbosity-levelled, coloured console output (`--quiet`, `--verbose`, `--silent`) |
-| [`chttp`](chttp) | an `http.Client` with per-attempt timeouts, retries that never re-send a mutation whose fate is unknown, and a trace of every exchange for the logger it is handed; and what an API client needs around one: an answer read whole, credentials kept out of errors, traces and other hosts, and one error for an unexpected status. Standard library only, so an SDK can be built on it |
-| [`version`](version) | the tool's version, stamped at build time or taken from module build info |
-| [`pointer`](pointer) | `From` and `To` for optional API fields: dereference-or-zero, and pointer-to-value in expression position |
-| [`spelling`](spelling) | one name spelled two ways: a key that folds case, accents, separators and punctuation, and the tests for a slip of the keyboard, a name cut short or a first name reduced to its initial |
-| [`whitespace`](whitespace) | the spaces out of place in a name - doubled, at an end, odd, before a colon or a file extension - named, made visible and put right |
-| [`outside`](outside) | text that came from outside - a release's name, a file's, a description anyone can write - with what does not show taken out and cut to a length, before a model reads it; and a server's own words for what went wrong, with what an address in them may carry a credential in blanked |
-| [`parallel`](parallel) | a batch of jobs run a few at a time, stopped at the first error |
-| [`lock`](lock) | a lock on a record, a named piece of one or a plain string, any mix in one call, so two edits of one thing in one process take turns; one set for the process, or a set of your own |
-| [`mcp/server`](mcp/server) | an MCP server served over stdio, or over HTTP behind a bearer token with a health probe |
-| [`mcp/registry`](mcp/registry) | which tools an MCP session gets: read, write and delete kinds, toolsets, an allow list that adds tools by name and a deny list that takes them out; and what stands around every tool: a line written for each write with its credentials blanked, a failure's words without an address's secrets, and every piece of text in an answer cleaned once |
-| [`mcp/acctest`](mcp/acctest) | a test suite that drives an MCP server as a client does, and fails when a tool was never seen to work |
-| [`pmetrics`](pmetrics) | a tool's Prometheus metrics page: its own readings and none of the Go runtime's, the labels whoever runs it wants on every one, one reading that says which build wrote it, written as text or served over HTTP with a health probe |
-| [`test/replayproxy`](test/replayproxy) | what a server under test fetches from the internet, recorded once and replayed in CI |
-| [`test/env`](test/env) | a live suite's surroundings: its environment variables, its replay proxy, and files laid out where the server's container reads them |
-| [`test/services/arrserver`](test/services/arrserver) | the servers a Sonarr, Radarr or Prowlarr calls home to, for a live suite to answer itself: the update server, the clock and the notices, none of which can be recorded once and replayed |
-| [`test/services/newznab`](test/services/newznab) | Newznab and Torznab indexers for a live suite to run beside the server under test: the test decides which releases exist, sees every request, and makes an indexer fail, flake, slow down or refuse its key |
-| [`test/services/sabnzbd`](test/services/sabnzbd) | a SABnzbd for a live suite: a download client that downloads nothing, whose jobs the test progresses, pauses, completes with the files it names, or fails |
+| [`clog`](clog) | the shared logger, with its level set from the tool's own environment variable |
+| [`cout`](cout) | console output with colour and quiet, verbose and silent modes |
+| [`chttp`](chttp) | an HTTP client that retries what is safe to retry and keeps credentials out of logs and errors |
+| [`version`](version) | the tool's version, set at build time |
+| [`pointer`](pointer) | the value behind a pointer, and a pointer to a value |
+| [`spelling`](spelling) | tells whether two names are one name spelled two ways |
+| [`whitespace`](whitespace) | finds and fixes stray spaces in a name |
+| [`outside`](outside) | cleans text that came from outside before a model reads it |
+| [`parallel`](parallel) | runs a batch of jobs a few at a time and stops at the first error |
+| [`lock`](lock) | makes two edits of the same record take turns |
+| [`mcp/server`](mcp/server) | runs an MCP server over stdio, or over HTTP behind a token |
+| [`mcp/registry`](mcp/registry) | chooses which tools a session gets, logs each write, and keeps credentials out of logs and errors |
+| [`mcp/acctest`](mcp/acctest) | tests an MCP server as a client uses it, and fails if a tool was never seen to work |
+| [`pmetrics`](pmetrics) | a tool's Prometheus metrics page, with a health check |
+| [`test/replayproxy`](test/replayproxy) | records what a server under test fetches from the internet, and replays it in CI |
+| [`test/env`](test/env) | sets up a live test's surroundings: its variables, proxy and files |
+| [`test/services/arrserver`](test/services/arrserver) | stands in for the servers Sonarr, Radarr and Prowlarr call home to |
+| [`test/services/newznab`](test/services/newznab) | stand-in Newznab and Torznab indexers that a test controls |
+| [`test/services/sabnzbd`](test/services/sabnzbd) | a stand-in SABnzbd that downloads nothing, whose jobs a test controls |
+
+The detail for each is on [pkg.go.dev](https://pkg.go.dev/github.com/katbyte/go-kt).
+
+## Install
+
+```bash
+go get github.com/katbyte/go-kt@latest
+```
+
+It needs Go 1.27 or newer.
 
 ## Usage
 
@@ -43,26 +53,25 @@ import (
 )
 
 func init() {
-    clog.SetLevelFromEnv("MYTOOL_LOG") // "debug", "trace", ... default WARN
+    clog.SetLevelFromEnv("MYTOOL_LOG") // warnings and errors unless the variable says otherwise
 }
 
 func run(silent, quiet, verbose bool) {
-    cout.SetLevelFromFlags(silent, quiet, verbose) // or embed cout.Flags in your flag struct and call Apply()
+    cout.SetLevelFromFlags(silent, quiet, verbose)
 
     cout.Printf("<green>mytool</> %s\n", version.Version)
-    cout.Verbosef("only with -v\n")
-    cout.Quietf("%s\n", "the one line a script parses; printed in quiet mode and above")
-    cout.Errorf("<red>error:</> %v\n", err) // stderr, every mode except silent
+    cout.Verbosef("only when verbose\n")
+    cout.Quietf("still printed when quiet\n")
+    cout.Errorf("<red>error:</> %v\n", err) // every mode but silent
 
-    client := chttp.New(chttp.Options{Name: "MyAPI", Log: clog.Log}) // traces every exchange at TRACE, retries a 429, a 502-504 and a dropped connection
-    req = chttp.MarkRetrySafe(req)                                    // a POST that is really a read may be sent again too
-    resp, body, err := client.Fetch(req, 16<<20)                      // the whole answer, asked for again if it stops part way
+    client := chttp.New(chttp.Options{Name: "MyAPI", Log: clog.Log})
+    resp, body, err := client.Fetch(req, 16<<20) // the whole answer, up to 16 MB
 }
 ```
 
 ### Stamping the version
 
-Point the linker at this module's variables instead of a local `lib/version`:
+Point the linker at this module's variables:
 
 ```yaml
 # .goreleaser.yaml
@@ -71,14 +80,21 @@ ldflags:
   - -X github.com/katbyte/go-kt/version.GitCommit={{ .ShortCommit }}
 ```
 
-Tools installed with `go install ...@version` report the module version from build info; plain local builds report `dev`.
+A tool installed with `go install` reports its module version. A local build reports `dev`.
+
+## Used by
+
+- **MCP servers:** [abs-mcp](https://github.com/katbyte/abs-mcp), [dockhand-mcp](https://github.com/katbyte/dockhand-mcp), [embyfin-mcp](https://github.com/katbyte/embyfin-mcp), [prowlarr-mcp](https://github.com/katbyte/prowlarr-mcp), [radarr-mcp](https://github.com/katbyte/radarr-mcp), [sonarr-mcp](https://github.com/katbyte/sonarr-mcp), [technitium-mcp](https://github.com/katbyte/technitium-mcp), [truenas-mcp](https://github.com/katbyte/truenas-mcp)
+- **Metrics:** [embyfin-metrics](https://github.com/katbyte/embyfin-metrics), [leontp-metrics](https://github.com/katbyte/leontp-metrics), [truenas-metrics](https://github.com/katbyte/truenas-metrics)
+- **Libraries:** [pandorest](https://github.com/katbyte/pandorest)
+- **Other tools:** [acorn-vfd](https://github.com/katbyte/acorn-vfd), [ghp-sync](https://github.com/katbyte/ghp-sync), [go-ingest-media](https://github.com/katbyte/go-ingest-media), [gogo-jira-stats](https://github.com/katbyte/gogo-jira-stats), [gogo-repo-stats](https://github.com/katbyte/gogo-repo-stats), [koi](https://github.com/katbyte/koi), [nanoleaf-aurora-taproot](https://github.com/katbyte/nanoleaf-aurora-taproot), [prawn](https://github.com/katbyte/prawn), [tf-provider-profile](https://github.com/katbyte/tf-provider-profile), [tf-schema-extract](https://github.com/katbyte/tf-schema-extract)
 
 ## Development
 
 ```bash
-make tools      # build the pinned dev tools into .tools/bin
-make check-all  # build + test + lint + actionlint + yamllint + shellcheck + typos + depscheck
-make cover      # tests with coverage; the coverage workflow publishes the total as the README badge
+make tools      # install the pinned dev tools
+make check-all  # build, test and every lint
+make cover      # tests with coverage
 ```
 
-Nothing is vendored (consumers resolve dependencies through go.sum); tool versions are pinned in `.tools/go.mod` and dependabot keeps both current.
+Nothing is vendored. Tool versions are pinned in the makefile and `.tools/go.mod`.
