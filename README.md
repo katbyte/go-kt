@@ -98,3 +98,5 @@ make cover      # tests with coverage
 ```
 
 Nothing is vendored. Tool versions are pinned in the makefile and `.tools/go.mod`.
+
+How releases are cut is in [CONTRIBUTING.md](CONTRIBUTING.md).
