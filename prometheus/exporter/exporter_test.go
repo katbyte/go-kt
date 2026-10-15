@@ -34,7 +34,7 @@ func up(t *testing.T) *metrics.Page {
 	t.Helper()
 
 	d := prometheus.NewDesc("zzyzx_up", "Whether the thing answered (1) or not (0).", nil, nil)
-	page, err := metrics.New(metrics.Options{Name: "zzyzx-metrics", Namespace: "zzyzx"}, collector{d})
+	page, err := metrics.New(metrics.Options{Name: "zzyzx-metrics"}, collector{d})
 	if err != nil {
 		t.Fatalf("metrics.New: %v", err)
 	}

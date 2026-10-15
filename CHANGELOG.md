@@ -1,3 +1,8 @@
+## Unreleased
+
+- prometheus/metrics (breaking): the reading that says which build wrote the page is named for the tool, as Prometheus's own tools name theirs: sas-exporter gives sas_exporter_build_info. `Options.Namespace` is gone, so a tool drops it; `Options.BuildInfo` names the reading outright, to keep a name a dashboard already uses
+- prometheus/metricstest: a saved page leaves out the build's reading whatever the tool is called
+
 ## v0.8.0 (2026-10-14)
 
 - httpc (breaking): chttp is renamed httpc. A tool changes its import and calls `httpc.New` where it called `chttp.New`; nothing else changes

@@ -21,7 +21,7 @@ import (
 )
 
 // buildInfo ends the name of the reading every page has that says which build wrote it, which changes with each build.
-const buildInfo = "_metrics_build_info"
+const buildInfo = "_build_info"
 
 var update = flag.Bool("update", false, "rewrite each saved metrics page from the page as it is written now")
 

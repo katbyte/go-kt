@@ -43,7 +43,7 @@ func called(all map[string]poller.Target[card]) map[string]string {
 func page(t *testing.T, collectors ...prometheus.Collector) string {
 	t.Helper()
 
-	p, err := metrics.New(metrics.Options{Name: "zzyzx-metrics", Namespace: testNamespace}, collectors...)
+	p, err := metrics.New(metrics.Options{Name: "zzyzx-metrics"}, collectors...)
 	if err != nil {
 		t.Fatalf("metrics.New: %v", err)
 	}

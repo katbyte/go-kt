@@ -47,6 +47,10 @@ func TestAPageThatIsWhatWasSavedPasses(t *testing.T) {
 		t.Errorf("compare of a page from another build = %v, want nil", err)
 	}
 
+	if err := compare(strings.ReplaceAll(page, "zzyzx_metrics_build_info", "zzyzx_exporter_build_info"), file); err != nil {
+		t.Errorf("compare of a page whose build reading is named for an exporter = %v, want nil", err)
+	}
+
 	Saved(t, page, file)
 }
 

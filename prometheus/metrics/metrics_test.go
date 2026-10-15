@@ -18,7 +18,8 @@ import (
 )
 
 const (
-	testName      = "zzyzx-metrics"
+	testName = "zzyzx-metrics"
+	// testNamespace starts the name of each of a list's readings
 	testNamespace = "zzyzx"
 )
 
@@ -72,7 +73,7 @@ func samples(text string) []string {
 func TestThePageHoldsOnlyTheToolsReadings(t *testing.T) {
 	t.Parallel()
 
-	p, err := metrics.New(metrics.Options{Name: testName, Namespace: testNamespace}, newReadings())
+	p, err := metrics.New(metrics.Options{Name: testName}, newReadings())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -102,7 +103,7 @@ func TestThePageHoldsOnlyTheToolsReadings(t *testing.T) {
 func TestLabelsAreOnEveryReading(t *testing.T) {
 	t.Parallel()
 
-	p, err := metrics.New(metrics.Options{Name: testName, Namespace: testNamespace, Labels: map[string]string{"hostname": "ntp", "site": "home"}}, newReadings())
+	p, err := metrics.New(metrics.Options{Name: testName, Labels: map[string]string{"hostname": "ntp", "site": "home"}}, newReadings())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -131,13 +132,15 @@ func TestNewRefusesWhatAStoreWouldNotTake(t *testing.T) {
 		options metrics.Options
 		want    string
 	}{
-		"no namespace":                         {metrics.Options{}, "cannot start a reading's name"},
-		"a namespace with a dash":              {metrics.Options{Namespace: "zzyzx-metrics"}, "zzyzx-metrics"},
-		"a label named as a reading's own is":  {metrics.Options{Namespace: testNamespace, Labels: map[string]string{"hostname": "ntp", "state": "x"}}, `the label "state" is one a reading on the page already has`},
-		"a label named as the build's own is":  {metrics.Options{Namespace: testNamespace, Labels: map[string]string{"version": "x"}}, `the label "version" is one a reading on the page already has`},
-		"a label with a dash in its name":      {metrics.Options{Namespace: testNamespace, Labels: map[string]string{"host-name": "ntp"}}, "host-name"},
-		"a label a store keeps for itself":     {metrics.Options{Namespace: testNamespace, Labels: map[string]string{"__name__": "x"}}, "__name__"},
-		"a label with nothing to say under it": {metrics.Options{Namespace: testNamespace, Labels: map[string]string{"hostname": ""}}, "has no value"},
+		"no name":                                    {metrics.Options{}, "the page needs the tool's name"},
+		"a name that makes no reading's name":        {metrics.Options{Name: "zzyzx.exporter"}, `"zzyzx.exporter_build_info" cannot name the reading`},
+		"a build reading not named as such readings": {metrics.Options{Name: testName, BuildInfo: "zzyzx_build"}, `"zzyzx_build" cannot name the reading`},
+		"a build reading a store would not take":     {metrics.Options{Name: testName, BuildInfo: "zz-yzx_build_info"}, `"zz-yzx_build_info" cannot name the reading`},
+		"a label named as a reading's own is":        {metrics.Options{Name: testName, Labels: map[string]string{"hostname": "ntp", "state": "x"}}, `the label "state" is one a reading on the page already has`},
+		"a label named as the build's own is":        {metrics.Options{Name: testName, Labels: map[string]string{"version": "x"}}, `the label "version" is one a reading on the page already has`},
+		"a label with a dash in its name":            {metrics.Options{Name: testName, Labels: map[string]string{"host-name": "ntp"}}, "host-name"},
+		"a label a store keeps for itself":           {metrics.Options{Name: testName, Labels: map[string]string{"__name__": "x"}}, "__name__"},
+		"a label with nothing to say under it":       {metrics.Options{Name: testName, Labels: map[string]string{"hostname": ""}}, "has no value"},
 	} {
 		if _, err := metrics.New(c.options, newReadings()); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: New = %v, want an error saying %q", name, err, c.want)
@@ -149,7 +152,7 @@ func TestNewRefusesWhatAStoreWouldNotTake(t *testing.T) {
 func TestNewSaysWhenTheReadingsThemselvesAreWrong(t *testing.T) {
 	t.Parallel()
 
-	_, err := metrics.New(metrics.Options{Namespace: testNamespace, Labels: map[string]string{"hostname": "ntp"}}, newReadings(), newReadings())
+	_, err := metrics.New(metrics.Options{Name: testName, Labels: map[string]string{"hostname": "ntp"}}, newReadings(), newReadings())
 	if err == nil || !strings.Contains(err.Error(), "putting the readings on the page") || strings.Contains(err.Error(), "hostname") {
 		t.Errorf("New with the same readings twice = %v, want an error about the readings and not about a label", err)
 	}
@@ -198,7 +201,7 @@ func TestParseLabels(t *testing.T) {
 func TestRoutes(t *testing.T) {
 	t.Parallel()
 
-	p, err := metrics.New(metrics.Options{Name: testName, Namespace: testNamespace, Labels: map[string]string{"hostname": "ntp"}}, newReadings())
+	p, err := metrics.New(metrics.Options{Name: testName, Labels: map[string]string{"hostname": "ntp"}}, newReadings())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -238,7 +241,7 @@ func TestServeUntilStopped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p, err := metrics.New(metrics.Options{Name: testName, Namespace: testNamespace}, newReadings())
+	p, err := metrics.New(metrics.Options{Name: testName}, newReadings())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -278,7 +281,7 @@ func TestServeUntilStopped(t *testing.T) {
 func TestServeSaysWhenItCannotListen(t *testing.T) {
 	t.Parallel()
 
-	p, err := metrics.New(metrics.Options{Name: testName, Namespace: testNamespace})
+	p, err := metrics.New(metrics.Options{Name: testName})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -289,5 +292,25 @@ func TestServeSaysWhenItCannotListen(t *testing.T) {
 	}
 	if errors.Is(err, context.Canceled) {
 		t.Errorf("Serve failed for being stopped, not for the address: %v", err)
+	}
+}
+
+// The reading that says which build wrote the page is named for the tool, as Prometheus's own tools name theirs; a tool can name it outright to keep a
+// name a dashboard already uses.
+func TestTheBuildReadingIsNamedForTheTool(t *testing.T) {
+	t.Parallel()
+
+	for want, o := range map[string]metrics.Options{
+		"zzyzx_exporter_build_info": {Name: "zzyzx-exporter"},
+		"zzyzx_metrics_build_info":  {Name: "zzyzx-exporter", BuildInfo: "zzyzx_metrics_build_info"},
+	} {
+		p, err := metrics.New(o, newReadings())
+		if err != nil {
+			t.Fatalf("New(%+v): %v", o, err)
+		}
+
+		if text := written(t, p); !strings.Contains(text, "\n"+want+"{") {
+			t.Errorf("the page of %+v is\n%s\nwant the build's reading named %s", o, text, want)
+		}
 	}
 }

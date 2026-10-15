@@ -42,7 +42,7 @@ func (s shelf) Collect(ch chan<- prometheus.Metric) { s.collect(s.descs, ch) }
 func pageOf(t *testing.T, s shelf) (string, error) {
 	t.Helper()
 
-	p, err := metrics.New(metrics.Options{Name: testName, Namespace: testNamespace}, s)
+	p, err := metrics.New(metrics.Options{Name: testName}, s)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestAReadingWithTheWrongLabelsIsSaidAndLeftOff(t *testing.T) {
 		t.Errorf("the written page is\n%s\nwant the reading that could be written and not the one that could not", text)
 	}
 
-	p, err := metrics.New(metrics.Options{Name: testName, Namespace: testNamespace}, s)
+	p, err := metrics.New(metrics.Options{Name: testName}, s)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestAReadingAStoreWouldNotTakeIsRefused(t *testing.T) {
 		list.Reading(c.name, "What it is.", c.labels...)
 
 		s := shelf{list: list, collect: func(map[string]*prometheus.Desc, chan<- prometheus.Metric) {}}
-		if _, err := metrics.New(metrics.Options{Name: testName, Namespace: testNamespace}, s); err == nil || !strings.Contains(err.Error(), c.want) {
+		if _, err := metrics.New(metrics.Options{Name: testName}, s); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("New = %v, want an error saying %s", err, c.want)
 		}
 	}
