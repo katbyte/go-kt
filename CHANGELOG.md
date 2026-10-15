@@ -1,4 +1,4 @@
-## Unreleased
+## v0.9.0 (2026-10-15)
 
 - prometheus/metrics (breaking): the reading that says which build wrote the page is named for the tool, as Prometheus's own tools name theirs: sas-exporter gives sas_exporter_build_info. `Options.Namespace` is gone, so a tool drops it; `Options.BuildInfo` names the reading outright, to keep a name a dashboard already uses
 - prometheus/metricstest: a saved page leaves out the build's reading whatever the tool is called
