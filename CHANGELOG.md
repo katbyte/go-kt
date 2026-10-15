@@ -1,3 +1,7 @@
+## Unreleased
+
+- prometheus/metrics (breaking): pmetrics moves here, beside the other Prometheus pieces. A tool changes its import and calls `metrics.New` where it called `pmetrics.New`; nothing else changes
+
 ## v0.7.0 (2026-10-12)
 
 - pmetrics: add the package, a tool's Prometheus metrics page. It holds the tool's own readings and nothing of the Go runtime's, puts the labels whoever runs the tool asks for on every reading, and says which build wrote it. It is written as text or served over HTTP beside a health check. Only this package uses the Prometheus client, so a tool without a metrics page does not build it in

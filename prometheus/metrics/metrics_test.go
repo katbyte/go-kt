@@ -1,4 +1,4 @@
-package pmetrics_test
+package metrics_test
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil/promlint"
 
-	"github.com/katbyte/go-kt/pmetrics"
+	"github.com/katbyte/go-kt/prometheus/metrics"
 )
 
 const (
@@ -45,7 +45,7 @@ func (r readings) Collect(ch chan<- prometheus.Metric) {
 }
 
 // written is the page as text.
-func written(t *testing.T, p *pmetrics.Page) string {
+func written(t *testing.T, p *metrics.Page) string {
 	t.Helper()
 
 	var b strings.Builder
@@ -72,7 +72,7 @@ func samples(text string) []string {
 func TestThePageHoldsOnlyTheToolsReadings(t *testing.T) {
 	t.Parallel()
 
-	p, err := pmetrics.New(pmetrics.Options{Name: testName, Namespace: testNamespace}, newReadings())
+	p, err := metrics.New(metrics.Options{Name: testName, Namespace: testNamespace}, newReadings())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestThePageHoldsOnlyTheToolsReadings(t *testing.T) {
 func TestLabelsAreOnEveryReading(t *testing.T) {
 	t.Parallel()
 
-	p, err := pmetrics.New(pmetrics.Options{Name: testName, Namespace: testNamespace, Labels: map[string]string{"hostname": "ntp", "site": "home"}}, newReadings())
+	p, err := metrics.New(metrics.Options{Name: testName, Namespace: testNamespace, Labels: map[string]string{"hostname": "ntp", "site": "home"}}, newReadings())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -128,18 +128,18 @@ func TestNewRefusesWhatAStoreWouldNotTake(t *testing.T) {
 	t.Parallel()
 
 	for name, c := range map[string]struct {
-		options pmetrics.Options
+		options metrics.Options
 		want    string
 	}{
-		"no namespace":                         {pmetrics.Options{}, "cannot start a reading's name"},
-		"a namespace with a dash":              {pmetrics.Options{Namespace: "zzyzx-metrics"}, "zzyzx-metrics"},
-		"a label named as a reading's own is":  {pmetrics.Options{Namespace: testNamespace, Labels: map[string]string{"hostname": "ntp", "state": "x"}}, `the label "state" is one a reading on the page already has`},
-		"a label named as the build's own is":  {pmetrics.Options{Namespace: testNamespace, Labels: map[string]string{"version": "x"}}, `the label "version" is one a reading on the page already has`},
-		"a label with a dash in its name":      {pmetrics.Options{Namespace: testNamespace, Labels: map[string]string{"host-name": "ntp"}}, "host-name"},
-		"a label a store keeps for itself":     {pmetrics.Options{Namespace: testNamespace, Labels: map[string]string{"__name__": "x"}}, "__name__"},
-		"a label with nothing to say under it": {pmetrics.Options{Namespace: testNamespace, Labels: map[string]string{"hostname": ""}}, "has no value"},
+		"no namespace":                         {metrics.Options{}, "cannot start a reading's name"},
+		"a namespace with a dash":              {metrics.Options{Namespace: "zzyzx-metrics"}, "zzyzx-metrics"},
+		"a label named as a reading's own is":  {metrics.Options{Namespace: testNamespace, Labels: map[string]string{"hostname": "ntp", "state": "x"}}, `the label "state" is one a reading on the page already has`},
+		"a label named as the build's own is":  {metrics.Options{Namespace: testNamespace, Labels: map[string]string{"version": "x"}}, `the label "version" is one a reading on the page already has`},
+		"a label with a dash in its name":      {metrics.Options{Namespace: testNamespace, Labels: map[string]string{"host-name": "ntp"}}, "host-name"},
+		"a label a store keeps for itself":     {metrics.Options{Namespace: testNamespace, Labels: map[string]string{"__name__": "x"}}, "__name__"},
+		"a label with nothing to say under it": {metrics.Options{Namespace: testNamespace, Labels: map[string]string{"hostname": ""}}, "has no value"},
 	} {
-		if _, err := pmetrics.New(c.options, newReadings()); err == nil || !strings.Contains(err.Error(), c.want) {
+		if _, err := metrics.New(c.options, newReadings()); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: New = %v, want an error saying %q", name, err, c.want)
 		}
 	}
@@ -149,7 +149,7 @@ func TestNewRefusesWhatAStoreWouldNotTake(t *testing.T) {
 func TestNewSaysWhenTheReadingsThemselvesAreWrong(t *testing.T) {
 	t.Parallel()
 
-	_, err := pmetrics.New(pmetrics.Options{Namespace: testNamespace, Labels: map[string]string{"hostname": "ntp"}}, newReadings(), newReadings())
+	_, err := metrics.New(metrics.Options{Namespace: testNamespace, Labels: map[string]string{"hostname": "ntp"}}, newReadings(), newReadings())
 	if err == nil || !strings.Contains(err.Error(), "putting the readings on the page") || strings.Contains(err.Error(), "hostname") {
 		t.Errorf("New with the same readings twice = %v, want an error about the readings and not about a label", err)
 	}
@@ -166,7 +166,7 @@ func TestParseLabels(t *testing.T) {
 		" hostname = ntp , site=home ": {"hostname": "ntp", "site": "home"},
 		"where=rack 2, shelf=a=b":      {"where": "rack 2", "shelf": "a=b"},
 	} {
-		got, err := pmetrics.ParseLabels(setting)
+		got, err := metrics.ParseLabels(setting)
 		if err != nil {
 			t.Errorf("ParseLabels(%q): %v", setting, err)
 			continue
@@ -188,7 +188,7 @@ func TestParseLabels(t *testing.T) {
 		"1st=ntp":               "1st",
 		"__address__=ntp":       "two underscores",
 	} {
-		if got, err := pmetrics.ParseLabels(setting); err == nil || !strings.Contains(err.Error(), want) {
+		if got, err := metrics.ParseLabels(setting); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("ParseLabels(%q) = %v, %v, want an error saying %q", setting, got, err, want)
 		}
 	}
@@ -198,7 +198,7 @@ func TestParseLabels(t *testing.T) {
 func TestRoutes(t *testing.T) {
 	t.Parallel()
 
-	p, err := pmetrics.New(pmetrics.Options{Name: testName, Namespace: testNamespace, Labels: map[string]string{"hostname": "ntp"}}, newReadings())
+	p, err := metrics.New(metrics.Options{Name: testName, Namespace: testNamespace, Labels: map[string]string{"hostname": "ntp"}}, newReadings())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -209,12 +209,12 @@ func TestRoutes(t *testing.T) {
 		status       int
 		want         string
 	}{
-		{http.MethodGet, pmetrics.Path, http.StatusOK, `zzyzx_up{hostname="ntp"} 1`},
-		{http.MethodGet, pmetrics.HealthPath, http.StatusOK, "ok\n"},
+		{http.MethodGet, metrics.Path, http.StatusOK, `zzyzx_up{hostname="ntp"} 1`},
+		{http.MethodGet, metrics.HealthPath, http.StatusOK, "ok\n"},
 		{http.MethodGet, "/", http.StatusOK, testName + " "},
-		{http.MethodGet, "/", http.StatusOK, pmetrics.Path + "\n" + pmetrics.HealthPath + "\n"},
+		{http.MethodGet, "/", http.StatusOK, metrics.Path + "\n" + metrics.HealthPath + "\n"},
 		{http.MethodGet, "/nothing-here", http.StatusNotFound, ""},
-		{http.MethodPost, pmetrics.Path, http.StatusMethodNotAllowed, ""},
+		{http.MethodPost, metrics.Path, http.StatusMethodNotAllowed, ""},
 	} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), c.method, c.path, http.NoBody))
@@ -238,18 +238,18 @@ func TestServeUntilStopped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p, err := pmetrics.New(pmetrics.Options{Name: testName, Namespace: testNamespace}, newReadings())
+	p, err := metrics.New(metrics.Options{Name: testName, Namespace: testNamespace}, newReadings())
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(t.Context())
 	served := make(chan error, 1)
-	go func() { served <- pmetrics.Serve(ctx, addr, p.Handler()) }()
+	go func() { served <- metrics.Serve(ctx, addr, p.Handler()) }()
 
 	var body string
 	for range 50 {
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+pmetrics.HealthPath, http.NoBody)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+metrics.HealthPath, http.NoBody)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -266,7 +266,7 @@ func TestServeUntilStopped(t *testing.T) {
 		break
 	}
 	if strings.TrimSpace(body) != "ok" {
-		t.Errorf("%s over a real port = %q, want ok", pmetrics.HealthPath, body)
+		t.Errorf("%s over a real port = %q, want ok", metrics.HealthPath, body)
 	}
 
 	cancel()
@@ -278,12 +278,12 @@ func TestServeUntilStopped(t *testing.T) {
 func TestServeSaysWhenItCannotListen(t *testing.T) {
 	t.Parallel()
 
-	p, err := pmetrics.New(pmetrics.Options{Name: testName, Namespace: testNamespace})
+	p, err := metrics.New(metrics.Options{Name: testName, Namespace: testNamespace})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
-	err = pmetrics.Serve(t.Context(), "256.0.0.1:1", p.Handler())
+	err = metrics.Serve(t.Context(), "256.0.0.1:1", p.Handler())
 	if err == nil || !strings.Contains(err.Error(), "256.0.0.1:1") {
 		t.Errorf("Serve on an address that does not exist = %v, want an error naming it", err)
 	}
