@@ -5,6 +5,7 @@
 - prometheus/metrics (fix): a page with one reading that cannot be written is printed without that reading, where it printed nothing at all
 - prometheus/metricstest: add the package, the checks a tool's tests make of its metrics page: against a saved copy, against Prometheus's naming rules, and of a running tool's page
 - prometheus/poller: add the package. It asks what a tool reports on, on schedules of the tool's own, and keeps the last good answers, so the page is served from memory; one slow or missing target holds up no other. Every tool reads its --intervals setting the same way
+- prometheus/exporter: add the package, a tool's print and serve commands in two calls
 
 ## v0.7.0 (2026-10-12)
 

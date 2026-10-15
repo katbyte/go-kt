@@ -27,6 +27,7 @@ The small packages every katbyte tool needs, kept in one place instead of copied
 | [`mcp/acctest`](mcp/acctest) | tests an MCP server as a client uses it, and fails if a tool was never seen to work |
 | [`prometheus/metrics`](prometheus/metrics) | a tool's Prometheus metrics page, with a health check |
 | [`prometheus/poller`](prometheus/poller) | asks what a tool reports on, on schedules, and keeps the last good answers |
+| [`prometheus/exporter`](prometheus/exporter) | a tool's print and serve commands, from a poller and a metrics page |
 | [`prometheus/metricstest`](prometheus/metricstest) | checks a tool's metrics page against a saved copy and Prometheus's naming rules |
 | [`test/replayproxy`](test/replayproxy) | records what a server under test fetches from the internet, and replays it in CI |
 | [`test/env`](test/env) | sets up a live test's surroundings: its variables, proxy and files |
