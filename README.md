@@ -15,6 +15,7 @@ The small packages every katbyte tool needs, kept in one place instead of copied
 | [`clog`](clog) | the shared logger, with its level set from the tool's own environment variable |
 | [`cout`](cout) | console output with colour and quiet, verbose and silent modes |
 | [`httpc`](httpc) | an HTTP client that retries what is safe to retry and keeps credentials out of logs and errors |
+| [`httpd`](httpd) | the HTTP server under a tool's routes, with a health check and a clean stop |
 | [`version`](version) | the tool's version, set at build time |
 | [`pointer`](pointer) | the value behind a pointer, and a pointer to a value |
 | [`spelling`](spelling) | tells whether two names are one name spelled two ways |

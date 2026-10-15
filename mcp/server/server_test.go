@@ -191,7 +191,8 @@ func TestServeAnswersAndStopsWithAClientConnected(t *testing.T) {
 		if err != nil {
 			t.Errorf("the server stopped with %v", err)
 		}
-	case <-time.After(shutdownTimeout - 2*time.Second):
+	// a stop waits ten seconds for requests under way, so eight says the open stream was closed, not waited out
+	case <-time.After(8 * time.Second):
 		t.Fatal("the server was still up eight seconds after it was told to stop: it is waiting on the client's open stream")
 	}
 }
