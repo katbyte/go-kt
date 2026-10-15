@@ -10,7 +10,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/katbyte/go-kt/chttp"
+	"github.com/katbyte/go-kt/httpc"
 )
 
 func TestNewDefaults(t *testing.T) {
@@ -149,7 +149,7 @@ func (a answer) RoundTrip(req *http.Request) (*http.Response, error) {
 	return &http.Response{Status: "200 OK", StatusCode: http.StatusOK, Proto: "HTTP/1.1", Header: http.Header{"Content-Type": {"application/json"}}, Body: a.body, Request: req}, nil
 }
 
-// A logger made here is what chttp asks for as it stands, and what chttp
+// A logger made here is what httpc asks for as it stands, and what httpc
 // relies on holds of it: below trace a request's trace is never put
 // together, so nothing is read from the answer to show it.
 func TestALoggerIsWhatAnHTTPClientTraces(t *testing.T) {
@@ -157,8 +157,8 @@ func TestALoggerIsWhatAnHTTPClientTraces(t *testing.T) {
 
 	var buf bytes.Buffer
 	l := NewWithOutput(&buf)
-	var _ chttp.Logger = l
-	var _ chttp.Logger = Log
+	var _ httpc.Logger = l
+	var _ httpc.Logger = Log
 
 	send := func() *read {
 		t.Helper()
@@ -166,7 +166,7 @@ func TestALoggerIsWhatAnHTTPClientTraces(t *testing.T) {
 		body := &read{Reader: strings.NewReader(`{"hello":"world"}`)}
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://nas.invalid/things", http.NoBody)
 		req.Header.Set("Authorization", "Bearer s3cret")
-		resp, err := chttp.NewTransport(chttp.Options{Name: "Widget", Log: l}, answer{body}).RoundTrip(req)
+		resp, err := httpc.NewTransport(httpc.Options{Name: "Widget", Log: l}, answer{body}).RoundTrip(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -186,7 +186,7 @@ func TestALoggerIsWhatAnHTTPClientTraces(t *testing.T) {
 
 	// the same request with the body watched from before it is sent: nothing reads it until the caller does
 	watched := &read{Reader: strings.NewReader(`{"hello":"world"}`)}
-	resp, err := chttp.NewTransport(chttp.Options{Name: "Widget", Log: l}, answer{watched}).RoundTrip(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://nas.invalid/things", http.NoBody))
+	resp, err := httpc.NewTransport(httpc.Options{Name: "Widget", Log: l}, answer{watched}).RoundTrip(httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://nas.invalid/things", http.NoBody))
 	if err != nil {
 		t.Fatal(err)
 	}

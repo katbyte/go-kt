@@ -14,4 +14,4 @@ I will do my best to acknowledge reports within 2 weeks and aim to release a fix
 
 ## Scope
 
-`go-kt` is a library shared by katbyte's command-line tools. `chttp` trace-logs full HTTP requests and responses (including `Authorization` headers) at TRACE level, so anything that causes that output to appear at a lower level, or a retry that re-sends a mutation it should not, is particularly relevant.
+`go-kt` is a library shared by katbyte's command-line tools. `httpc` trace-logs full HTTP requests and responses (including `Authorization` headers) at TRACE level, so anything that causes that output to appear at a lower level, or a retry that re-sends a mutation it should not, is particularly relevant.

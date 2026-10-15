@@ -14,7 +14,7 @@ The small packages every katbyte tool needs, kept in one place instead of copied
 |---|---|
 | [`clog`](clog) | the shared logger, with its level set from the tool's own environment variable |
 | [`cout`](cout) | console output with colour and quiet, verbose and silent modes |
-| [`chttp`](chttp) | an HTTP client that retries what is safe to retry and keeps credentials out of logs and errors |
+| [`httpc`](httpc) | an HTTP client that retries what is safe to retry and keeps credentials out of logs and errors |
 | [`version`](version) | the tool's version, set at build time |
 | [`pointer`](pointer) | the value behind a pointer, and a pointer to a value |
 | [`spelling`](spelling) | tells whether two names are one name spelled two ways |
@@ -51,7 +51,7 @@ It needs Go 1.27 or newer.
 import (
     "github.com/katbyte/go-kt/clog"
     "github.com/katbyte/go-kt/cout"
-    "github.com/katbyte/go-kt/chttp"
+    "github.com/katbyte/go-kt/httpc"
     "github.com/katbyte/go-kt/version"
 )
 
@@ -67,7 +67,7 @@ func run(silent, quiet, verbose bool) {
     cout.Quietf("still printed when quiet\n")
     cout.Errorf("<red>error:</> %v\n", err) // every mode but silent
 
-    client := chttp.New(chttp.Options{Name: "MyAPI", Log: clog.Log})
+    client := httpc.New(httpc.Options{Name: "MyAPI", Log: clog.Log})
     resp, body, err := client.Fetch(req, 16<<20) // the whole answer, up to 16 MB
 }
 ```
