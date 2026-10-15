@@ -3,6 +3,7 @@
 - httpc (breaking): chttp is renamed httpc. A tool changes its import and calls `httpc.New` where it called `chttp.New`; nothing else changes
 - httpd: add the package, the HTTP server under a tool's routes: it listens, answers a health check, and on stop lets requests under way finish. mcp/server and prometheus/metrics serve through it, with nothing changed for a tool
 - text: add the package, small helpers for wording more than one tool needs: a description's first sentence or first line, and the article a word takes
+- mcp/registry: the page size a call asked for, where the next page starts, and how long a call asked to wait, which four MCP servers each kept a copy of
 - prometheus/metrics (breaking): pmetrics moves here, beside the other Prometheus pieces. A tool changes its import and calls `metrics.New` where it called `pmetrics.New`; nothing else changes
 - prometheus/metrics: a tool lists its readings in one place and writes them with the package's writer, in place of its own copy of both. A reading given twice is left off rather than spoiling the page
 - prometheus/metrics (fix): a page with one reading that cannot be written is printed without that reading, where it printed nothing at all
