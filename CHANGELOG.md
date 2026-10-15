@@ -1,6 +1,8 @@
 ## Unreleased
 
 - prometheus/metrics (breaking): pmetrics moves here, beside the other Prometheus pieces. A tool changes its import and calls `metrics.New` where it called `pmetrics.New`; nothing else changes
+- prometheus/metrics: a tool lists its readings in one place and writes them with the package's writer, in place of its own copy of both. A reading given twice is left off rather than spoiling the page
+- prometheus/metrics (fix): a page with one reading that cannot be written is printed without that reading, where it printed nothing at all
 
 ## v0.7.0 (2026-10-12)
 

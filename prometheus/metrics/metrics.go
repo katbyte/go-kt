@@ -76,18 +76,20 @@ func register(labels prometheus.Labels, registry *prometheus.Registry, collector
 	return nil
 }
 
-// Write writes the page as text, the way a scrape reads it.
+// Write writes the page as text, the way a scrape reads it. A reading that cannot be written is left off and said in the error, and the rest is still
+// written, as a scrape still gets it.
 func (p *Page) Write(w io.Writer) error {
-	families, err := p.registry.Gather()
-	if err != nil {
-		return fmt.Errorf("gathering the readings: %w", err)
-	}
+	families, gathered := p.registry.Gather()
 
 	enc := expfmt.NewEncoder(w, expfmt.NewFormat(expfmt.TypeTextPlain))
 	for _, family := range families {
 		if err := enc.Encode(family); err != nil {
 			return fmt.Errorf("writing %s: %w", family.GetName(), err)
 		}
+	}
+
+	if gathered != nil {
+		return fmt.Errorf("gathering the readings: %w", gathered)
 	}
 
 	return nil
