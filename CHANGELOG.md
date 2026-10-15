@@ -1,4 +1,4 @@
-## Unreleased
+## v0.8.0 (2026-10-14)
 
 - httpc (breaking): chttp is renamed httpc. A tool changes its import and calls `httpc.New` where it called `chttp.New`; nothing else changes
 - httpd: add the package, the HTTP server under a tool's routes: it listens, answers a health check, and on stop lets requests under way finish. mcp/server and prometheus/metrics serve through it, with nothing changed for a tool
