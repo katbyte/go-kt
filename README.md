@@ -18,6 +18,7 @@ The small packages every katbyte tool needs, kept in one place instead of copied
 | [`httpd`](httpd) | the HTTP server under a tool's routes, with a health check and a clean stop |
 | [`version`](version) | the tool's version, set at build time |
 | [`pointer`](pointer) | the value behind a pointer, and a pointer to a value |
+| [`text`](text) | a description's first sentence or first line, and the article a word takes |
 | [`spelling`](spelling) | tells whether two names are one name spelled two ways |
 | [`whitespace`](whitespace) | finds and fixes stray spaces in a name |
 | [`outside`](outside) | cleans text that came from outside before a model reads it |
