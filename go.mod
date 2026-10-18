@@ -3,7 +3,7 @@ module github.com/katbyte/go-kt
 go 1.27.0
 
 require (
-	github.com/gookit/color v1.6.1
+	github.com/gookit/color v1.6.2
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/common v0.72.1
