@@ -1,3 +1,7 @@
+## Unreleased
+
+- README: the tools that use the library are listed by the names they have now: the three metrics tools are Prometheus exporters, and sas-exporter and syslog-relay are added. Nothing in the library changes
+
 ## v0.9.0 (2026-10-15)
 
 - prometheus/metrics (breaking): the reading that says which build wrote the page is named for the tool, as Prometheus's own tools name theirs: sas-exporter gives sas_exporter_build_info. `Options.Namespace` is gone, so a tool drops it; `Options.BuildInfo` names the reading outright, to keep a name a dashboard already uses
