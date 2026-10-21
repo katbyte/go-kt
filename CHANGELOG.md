@@ -1,4 +1,4 @@
-## Unreleased
+## v0.9.1 (2026-10-20)
 
 - README: the tools that use the library are listed by the names they have now: the three metrics tools are Prometheus exporters, and sas-exporter and syslog-relay are added. Nothing in the library changes
 
